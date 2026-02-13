@@ -78,7 +78,7 @@ const AdminLogin = () => {
               </svg>
             </div>
             <h1 className="mt-4 text-xl font-semibold text-slate-900">
-              LogiMed Tingo María
+              SelvaCargo
             </h1>
             <p className="mt-1 text-sm text-slate-500">
               Sistema de gestión de paquetes
