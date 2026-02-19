@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "cross-env NODE_ENV=test node --test"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -15,5 +16,8 @@
     "pg": "^8.11.5",
     "uuid": "^9.0.1",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }

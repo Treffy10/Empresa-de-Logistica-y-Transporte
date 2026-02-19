@@ -27,6 +27,9 @@ const seedAdminName = process.env.ADMIN_SEED_NAME || "Walter";
 const seedAdminEmail =
   process.env.ADMIN_SEED_EMAIL || "wruizmarin21@gmail.com";
 const seedAdminPass = process.env.ADMIN_SEED_PASS || "wally21";
+const dniApiUrl =
+  process.env.DNI_API_URL || "https://api.decolecta.com/v1/reniec/dni";
+const dniApiToken = process.env.DNI_API_TOKEN || "";
 const authTokens = new Map();
 
 app.use(cors());
@@ -89,6 +92,77 @@ const escapeCsv = (value) => {
   if (value === null || value === undefined) return "";
   const str = String(value);
   return `"${str.replace(/"/g, '""')}"`;
+};
+
+const PHONE_RULES = {
+  PE: { name: "Peru", dialCode: "51", digits: 9 },
+  CL: { name: "Chile", dialCode: "56", digits: 9 },
+  CO: { name: "Colombia", dialCode: "57", digits: 10 },
+  EC: { name: "Ecuador", dialCode: "593", digits: 9 },
+  MX: { name: "Mexico", dialCode: "52", digits: 10 },
+  US: { name: "Estados Unidos", dialCode: "1", digits: 10 }
+};
+
+const textValue = (value) => String(value || "").trim();
+
+const resolvePhone = (payload) => {
+  const countryIso = textValue(payload.telefonoPais).toUpperCase();
+  const source = textValue(payload.telefonoNumero || payload.telefono);
+  if (!countryIso || !source) {
+    return { ok: false, error: "telefonoPais y telefonoNumero son requeridos" };
+  }
+  const rule = PHONE_RULES[countryIso];
+  if (!rule) {
+    return { ok: false, error: "Pais de telefono no soportado" };
+  }
+  const digitsOnly = source.replace(/\D/g, "");
+  const local =
+    digitsOnly.startsWith(rule.dialCode) &&
+    digitsOnly.length === rule.dialCode.length + rule.digits
+      ? digitsOnly.slice(rule.dialCode.length)
+      : digitsOnly;
+  if (local.length !== rule.digits) {
+    return {
+      ok: false,
+      error: `El telefono para ${rule.name} debe tener ${rule.digits} digitos`
+    };
+  }
+  return {
+    ok: true,
+    countryIso,
+    local,
+    e164: `+${rule.dialCode}${local}`
+  };
+};
+
+const normalizeDniData = (rawData, dni) => {
+  const data = rawData || {};
+  const nombres = textValue(data.nombres || data.name || data.first_name);
+  const apellidoPaterno = textValue(
+    data.apellidoPaterno ||
+      data.apellido_paterno ||
+      data.father_last_name ||
+      data.first_last_name
+  );
+  const apellidoMaterno = textValue(
+    data.apellidoMaterno ||
+      data.apellido_materno ||
+      data.mother_last_name ||
+      data.second_last_name
+  );
+  const nombreCompleto = textValue(
+    data.nombreCompleto ||
+      data.nombre_completo ||
+      data.full_name ||
+      [nombres, apellidoPaterno, apellidoMaterno].filter(Boolean).join(" ")
+  );
+  return {
+    dni,
+    nombres,
+    apellidoPaterno,
+    apellidoMaterno,
+    nombreCompleto
+  };
 };
 
 const ensureRoles = async () => {
@@ -174,13 +248,15 @@ app.post("/api/auth/login", (req, res) => {
       if (!user || user.activo === false) {
         throw new Error("Credenciales inválidas");
       }
-      const ok = await bcrypt.compare(password, user.password_hash || "");
+      const ok = await bcrypt.compare(
+        password,
+        user.password_hash || user.passwordHash || ""
+      );
       if (!ok) {
         throw new Error("Credenciales inválidas");
       }
-      const role = user.rol_id
-        ? await call(repo.getRoleById, user.rol_id)
-        : null;
+      const roleId = user.rol_id || user.rolId;
+      const role = roleId ? await call(repo.getRoleById, roleId) : null;
       const roleName = role?.nombre || null;
       const token = crypto.randomUUID();
       authTokens.set(token, sanitizeUser(user, roleName));
@@ -194,7 +270,29 @@ app.get("/api/clients", async (req, res) => {
 });
 
 app.post("/api/clients", async (req, res) => {
-  const client = await call(repo.createClient, req.body);
+  const { tipo, nombre, documento, email, direccion } = req.body || {};
+  if (
+    !textValue(tipo) ||
+    !textValue(nombre) ||
+    !textValue(documento) ||
+    !textValue(email) ||
+    !textValue(direccion)
+  ) {
+    return res.status(400).json({
+      error:
+        "tipo, nombre, documento, telefonoPais, telefonoNumero, email y direccion son requeridos"
+    });
+  }
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
+  const client = await call(repo.createClient, {
+    tipo: textValue(tipo),
+    nombre: textValue(nombre),
+    documento: textValue(documento),
+    telefono: phone.e164,
+    email: textValue(email),
+    direccion: textValue(direccion)
+  });
   res.status(201).json(client);
 });
 
@@ -230,31 +328,62 @@ app.post("/api/packages", async (req, res) => {
     return res.status(403).json({ error: "No autorizado" });
   }
   const {
+    tipoEnvio,
     remitenteId,
+    remitenteClienteId,
     destinatarioId,
     sucursalOrigenId,
     destinoTexto,
+    descripcion,
     operadorId,
     repartidorId
   } = req.body;
-  if (!remitenteId || !destinatarioId || !sucursalOrigenId || !destinoTexto) {
-    return res.status(400).json({
-      error:
-        "remitenteId, destinatarioId, sucursalOrigenId y destinoTexto son requeridos"
-    });
-  }
-  const remitente = await call(repo.getDistributorById, remitenteId);
-  const destinatario = await call(repo.getClientById, destinatarioId);
-  if (!remitente || !destinatario) {
-    return res.status(400).json({ error: "Distribuidora o cliente inválido" });
-  }
-  const origen = await call(repo.getBranchById, sucursalOrigenId);
-  if (!origen) {
-    return res.status(400).json({ error: "Sucursal inválida" });
+  const shippingType = textValue(tipoEnvio || "distribuidora_cliente");
+  if (!["distribuidora_cliente", "cliente_cliente"].includes(shippingType)) {
+    return res.status(400).json({ error: "tipoEnvio invalido" });
   }
   let operadorFinal = operadorId || null;
   if (!operadorFinal && req.authUser?.roleName === "Operador logístico") {
     operadorFinal = req.authUser.id;
+  }
+  if (
+    !destinatarioId ||
+    !sucursalOrigenId ||
+    !textValue(destinoTexto) ||
+    !textValue(descripcion) ||
+    !operadorFinal ||
+    !repartidorId
+  ) {
+    return res.status(400).json({
+      error:
+        "destinatarioId, sucursalOrigenId, destinoTexto, descripcion, operadorId y repartidorId son requeridos"
+    });
+  }
+  if (shippingType === "distribuidora_cliente" && !remitenteId) {
+    return res.status(400).json({ error: "remitenteId es requerido" });
+  }
+  if (shippingType === "cliente_cliente" && !remitenteClienteId) {
+    return res.status(400).json({ error: "remitenteClienteId es requerido" });
+  }
+  const remitente =
+    shippingType === "cliente_cliente"
+      ? await call(repo.getClientById, remitenteClienteId)
+      : await call(repo.getDistributorById, remitenteId);
+  const destinatario = await call(repo.getClientById, destinatarioId);
+  if (!remitente || !destinatario) {
+    return res.status(400).json({ error: "Remitente o cliente invalido" });
+  }
+  if (
+    shippingType === "cliente_cliente" &&
+    String(remitenteClienteId) === String(destinatarioId)
+  ) {
+    return res.status(400).json({
+      error: "Remitente y destinatario no pueden ser el mismo cliente"
+    });
+  }
+  const origen = await call(repo.getBranchById, sucursalOrigenId);
+  if (!origen) {
+    return res.status(400).json({ error: "Sucursal inválida" });
   }
   if (operadorFinal) {
     const operador = await call(repo.getUserById, operadorFinal);
@@ -281,7 +410,13 @@ app.post("/api/packages", async (req, res) => {
   }
   const pkg = await call(repo.createPackage, {
     ...req.body,
-    operadorId: operadorFinal
+    tipoEnvio: shippingType,
+    remitenteId: shippingType === "distribuidora_cliente" ? remitenteId : null,
+    remitenteClienteId:
+      shippingType === "cliente_cliente" ? remitenteClienteId : null,
+    operadorId: operadorFinal,
+    destinoTexto: textValue(destinoTexto),
+    descripcion: textValue(descripcion)
   });
   res.status(201).json(pkg);
 });
@@ -316,6 +451,47 @@ app.get("/api/tracking/:code", async (req, res) => {
     return res.status(404).json({ error: "Código no encontrado" });
   }
   res.json(tracking);
+});
+
+app.get("/api/dni/:dni", async (req, res) => {
+  const dni = textValue(req.params.dni).replace(/\D/g, "");
+  if (!/^\d{8}$/.test(dni)) {
+    return res.status(400).json({ error: "DNI invalido. Debe tener 8 digitos" });
+  }
+  if (!dniApiToken) {
+    return res.status(503).json({
+      error:
+        "Consulta DNI no configurada. Define DNI_API_TOKEN en backend/.env"
+    });
+  }
+  try {
+    const response = await fetch(
+      `${dniApiUrl}?numero=${encodeURIComponent(dni)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${dniApiToken}`,
+          Accept: "application/json"
+        }
+      }
+    );
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      return res.status(502).json({
+        error: data?.message || data?.error || "No se pudo consultar el DNI"
+      });
+    }
+    const normalized = normalizeDniData(data, dni);
+    if (!normalized.nombreCompleto) {
+      return res
+        .status(404)
+        .json({ error: "No se encontraron datos para el DNI consultado" });
+    }
+    return res.json(normalized);
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ error: err.message || "Error consultando API de DNI" });
+  }
 });
 
 app.get("/api/operators/phone", async (req, res) => {
@@ -371,11 +547,20 @@ app.get("/api/users/:id", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/users", requireAdmin, async (req, res) => {
-  const { nombre, email, telefono, rolId, sucursalId, password } = req.body;
-  if (!nombre || !email || !password) {
+  const { nombre, email, rolId, sucursalId, password } = req.body || {};
+  if (
+    !textValue(nombre) ||
+    !textValue(email) ||
+    !textValue(password) ||
+    !rolId ||
+    !sucursalId
+  ) {
     return res
       .status(400)
-      .json({ error: "nombre, email y contraseña son requeridos" });
+      .json({
+        error:
+          "nombre, email, telefonoPais, telefonoNumero, contraseña, rolId y sucursalId son requeridos"
+      });
   }
   if (rolId && !(await call(repo.getRoleById, rolId))) {
     return res.status(400).json({ error: "Rol inválido" });
@@ -383,10 +568,14 @@ app.post("/api/users", requireAdmin, async (req, res) => {
   if (sucursalId && !(await call(repo.getBranchById, sucursalId))) {
     return res.status(400).json({ error: "Sucursal inválida" });
   }
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await call(repo.createUser, {
     ...req.body,
-    telefono,
+    nombre: textValue(nombre),
+    email: textValue(email),
+    telefono: phone.e164,
     passwordHash
   });
   res.status(201).json(user);
@@ -394,7 +583,7 @@ app.post("/api/users", requireAdmin, async (req, res) => {
 
 app.put("/api/users/:id", requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { nombre, email, telefono, rolId, sucursalId, activo, password } =
+  const { nombre, email, rolId, sucursalId, activo, password } =
     req.body;
   const existing = await call(repo.getUserById, id);
   if (!existing) {
@@ -406,11 +595,19 @@ app.put("/api/users/:id", requireAdmin, async (req, res) => {
   if (sucursalId && !(await call(repo.getBranchById, sucursalId))) {
     return res.status(400).json({ error: "Sucursal inválida" });
   }
+  if (!textValue(nombre) || !textValue(email) || !rolId || !sucursalId) {
+    return res.status(400).json({
+      error:
+        "nombre, email, telefonoPais, telefonoNumero, rolId y sucursalId son requeridos"
+    });
+  }
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
   const passwordHash = password ? await bcrypt.hash(password, 10) : null;
   const updated = await call(repo.updateUser, id, {
-    nombre,
-    email,
-    telefono,
+    nombre: textValue(nombre),
+    email: textValue(email),
+    telefono: phone.e164,
     rolId,
     sucursalId,
     activo,
@@ -440,10 +637,13 @@ app.get("/api/branches", async (req, res) => {
 
 app.post("/api/branches", async (req, res) => {
   const { nombre, direccion } = req.body;
-  if (!nombre || !direccion) {
+  if (!textValue(nombre) || !textValue(direccion)) {
     return res.status(400).json({ error: "nombre y direccion son requeridos" });
   }
-  const branch = await call(repo.createBranch, req.body);
+  const branch = await call(repo.createBranch, {
+    nombre: textValue(nombre),
+    direccion: textValue(direccion)
+  });
   res.status(201).json(branch);
 });
 
@@ -456,11 +656,21 @@ app.get("/api/distributors", async (req, res) => {
 });
 
 app.post("/api/distributors", async (req, res) => {
-  const { nombre } = req.body;
-  if (!nombre) {
-    return res.status(400).json({ error: "nombre es requerido" });
+  const { nombre, razonSocial, direccion } = req.body || {};
+  if (!textValue(nombre) || !textValue(razonSocial) || !textValue(direccion)) {
+    return res.status(400).json({
+      error:
+        "nombre, razonSocial, telefonoPais, telefonoNumero y direccion son requeridos"
+    });
   }
-  const distributor = await call(repo.createDistributor, req.body);
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
+  const distributor = await call(repo.createDistributor, {
+    nombre: textValue(nombre),
+    razonSocial: textValue(razonSocial),
+    telefono: phone.e164,
+    direccion: textValue(direccion)
+  });
   res.status(201).json(distributor);
 });
 
@@ -482,6 +692,8 @@ app.get("/api/reports/packages", async (req, res) => {
   const headers = [
     "ID",
     "Codigo",
+    "Tipo Envio",
+    "Tipo Remitente",
     "Estado",
     "Descripcion",
     "Destino",
@@ -517,6 +729,8 @@ app.get("/api/reports/packages", async (req, res) => {
     return [
       pkg.id,
       pkg.codigoSeguimiento,
+      pkg.tipoEnvio || "",
+      pkg.remitenteTipo || "",
       pkg.estadoActual,
       pkg.descripcion,
       pkg.destinoTexto,
@@ -570,7 +784,15 @@ app.get("/api/reports/packages", async (req, res) => {
   res.send(`\uFEFF${csv}`);
 });
 
-app.listen(port, () => {
-  console.log(`API logística en http://localhost:${port}`);
-  ensureAdminUser();
-});
+const startServer = () => {
+  app.listen(port, () => {
+    console.log(`API logística en http://localhost:${port}`);
+    ensureAdminUser();
+  });
+};
+
+if (process.env.NODE_ENV !== "test") {
+  startServer();
+}
+
+export { app, startServer };

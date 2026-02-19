@@ -87,7 +87,10 @@ const users = [
 ];
 
 const buildTracking = (pkg) => {
-  const remitente = distributors.find((d) => d.id === pkg.remitenteId);
+  const remitente =
+    pkg.tipoEnvio === "cliente_cliente"
+      ? clients.find((c) => c.id === pkg.remitenteClienteId)
+      : distributors.find((d) => d.id === pkg.remitenteId);
   const destinatario = clients.find((c) => c.id === pkg.destinatarioId);
   const operador = users.find((u) => u.id === pkg.operadorId);
   const repartidor = users.find((u) => u.id === pkg.repartidorId);
@@ -99,6 +102,9 @@ const buildTracking = (pkg) => {
     estadoActual: pkg.estadoActual,
     descripcion: pkg.descripcion,
     destinoTexto: pkg.destinoTexto || "",
+    tipoEnvio: pkg.tipoEnvio || "distribuidora_cliente",
+    remitenteTipo:
+      pkg.tipoEnvio === "cliente_cliente" ? "Cliente" : "Distribuidora",
     remitente,
     destinatario,
     operador,
@@ -111,7 +117,14 @@ const buildTracking = (pkg) => {
 
 const buildPackageDetails = (pkg) => ({
   ...pkg,
-  remitente: distributors.find((d) => d.id === pkg.remitenteId) || null,
+  tipoEnvio: pkg.tipoEnvio || "distribuidora_cliente",
+  remitenteClienteId: pkg.remitenteClienteId || null,
+  remitenteTipo:
+    pkg.tipoEnvio === "cliente_cliente" ? "Cliente" : "Distribuidora",
+  remitente:
+    (pkg.tipoEnvio === "cliente_cliente"
+      ? clients.find((c) => c.id === pkg.remitenteClienteId)
+      : distributors.find((d) => d.id === pkg.remitenteId)) || null,
   destinatario: clients.find((c) => c.id === pkg.destinatarioId) || null,
   operador: users.find((u) => u.id === pkg.operadorId) || null,
   repartidor: users.find((u) => u.id === pkg.repartidorId) || null,
@@ -164,7 +177,9 @@ export const createPackage = (data) => {
   const pkg = {
     id: uuid(),
     codigoSeguimiento: code,
-    remitenteId: data.remitenteId,
+    tipoEnvio: data.tipoEnvio || "distribuidora_cliente",
+    remitenteId: data.remitenteId || null,
+    remitenteClienteId: data.remitenteClienteId || null,
     destinatarioId: data.destinatarioId,
     operadorId: data.operadorId || null,
     repartidorId: data.repartidorId || null,
