@@ -445,6 +445,71 @@ app.patch("/api/packages/:id/status", async (req, res) => {
   res.json(pkg);
 });
 
+app.patch("/api/packages/:id/reprogramar", async (req, res) => {
+  const { id } = req.params;
+  const { fecha, horaInicio, horaFin, direccion } = req.body || {};
+  if (!fecha || !horaInicio || !horaFin) {
+    return res.status(400).json({
+      error: "fecha, horaInicio y horaFin son requeridos"
+    });
+  }
+  const existing = await call(repo.getPackageById, id);
+  if (!existing) {
+    return res.status(404).json({ error: "Paquete no encontrado" });
+  }
+  if (existing.estado_actual !== "Intento fallido" && existing.estadoActual !== "Intento fallido") {
+    return res.status(400).json({
+      error: "Solo se puede reprogramar un paquete con estado Intento fallido"
+    });
+  }
+  if (req.authUser?.roleName === "Repartidor") {
+    const repartidorId = existing.repartidor_id || existing.repartidorId;
+    if (repartidorId !== req.authUser.id) {
+      return res.status(403).json({ error: "No autorizado" });
+    }
+  }
+  if (!repo.updatePackageReprogramar) {
+    return res.status(501).json({ error: "Reprogramación no disponible" });
+  }
+  const pkg = await call(repo.updatePackageReprogramar, id, {
+    fecha,
+    horaInicio,
+    horaFin,
+    direccion: direccion || null
+  });
+  res.json(pkg);
+});
+
+app.post("/api/tracking/:code/reprogramar", async (req, res) => {
+  const { code } = req.params;
+  const { fecha, horaInicio, horaFin, direccion } = req.body || {};
+  if (!fecha || !horaInicio || !horaFin) {
+    return res.status(400).json({
+      error: "fecha, horaInicio y horaFin son requeridos"
+    });
+  }
+  const tracking = await call(repo.getTrackingByCode, code);
+  if (!tracking) {
+    return res.status(404).json({ error: "Código no encontrado" });
+  }
+  if (tracking.estadoActual !== "Intento fallido") {
+    return res.status(400).json({
+      error: "Solo se puede reprogramar un paquete con estado Intento fallido"
+    });
+  }
+  if (!repo.updatePackageReprogramar) {
+    return res.status(501).json({ error: "Reprogramación no disponible" });
+  }
+  const pkg = await call(repo.updatePackageReprogramar, tracking.id, {
+    fecha,
+    horaInicio,
+    horaFin,
+    direccion: direccion || null
+  });
+  const updated = await call(repo.getTrackingByCode, code);
+  res.json(updated);
+});
+
 app.get("/api/tracking/:code", async (req, res) => {
   const tracking = await call(repo.getTrackingByCode, req.params.code);
   if (!tracking) {
@@ -713,6 +778,10 @@ app.get("/api/reports/packages", async (req, res) => {
     "Creado En",
     "Ultima Actualizacion",
     "Ultima Observacion",
+    "Reprogramacion Fecha",
+    "Reprogramacion Hora Inicio",
+    "Reprogramacion Hora Fin",
+    "Reprogramacion Direccion",
     "Historial Estados"
   ];
   const rows = packagesWithHistory.map((pkg) => {
@@ -750,6 +819,10 @@ app.get("/api/reports/packages", async (req, res) => {
       formatDate(pkg.creadoEn),
       formatDate(lastEntry?.fechaHora),
       lastEntry?.observacion || "",
+      pkg.reprogramacionFecha || "",
+      pkg.reprogramacionHoraInicio || "",
+      pkg.reprogramacionHoraFin || "",
+      pkg.reprogramacionDireccion || "",
       historyText
     ];
   });

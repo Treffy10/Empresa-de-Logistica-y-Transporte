@@ -48,6 +48,10 @@ const mapPackageRow = (row) => ({
   destinoTexto: row.destino_texto || "",
   descripcion: row.descripcion,
   estadoActual: row.estado_actual,
+  reprogramacionFecha: row.reprogramacion_fecha,
+  reprogramacionHoraInicio: row.reprogramacion_hora_inicio,
+  reprogramacionHoraFin: row.reprogramacion_hora_fin,
+  reprogramacionDireccion: row.reprogramacion_direccion,
   creadoEn: toIsoUtc(row.creado_en)
 });
 
@@ -561,6 +565,34 @@ export const updatePackageStatus = async (id, estado, observacion = "") => {
   return rows[0] ? mapPackageRow(rows[0]) : null;
 };
 
+export const updatePackageReprogramar = async (
+  id,
+  { fecha, horaInicio, horaFin, direccion }
+) => {
+  const updates = [
+    "reprogramacion_fecha = $1",
+    "reprogramacion_hora_inicio = $2",
+    "reprogramacion_hora_fin = $3",
+    "reprogramacion_direccion = $4",
+    "estado_actual = $5"
+  ];
+  const params = [fecha, horaInicio, horaFin, direccion || null, "En Tránsito"];
+  if (direccion && String(direccion).trim()) {
+    updates.push("destino_texto = $6");
+    params.push(direccion.trim());
+  }
+  params.push(id);
+  const { rows } = await query(
+    `UPDATE paquetes SET ${updates.join(", ")} WHERE id = $${params.length} RETURNING *`,
+    params
+  );
+  await query(
+    "INSERT INTO historial_estados (paquete_id, estado, observacion) VALUES ($1, $2, $3)",
+    [id, "En Tránsito", "Reprogramado para entrega"]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
 export const getTrackingByCode = async (code) => {
   const { rows } = await query(
     `
@@ -599,6 +631,7 @@ export const getTrackingByCode = async (code) => {
     [pkg.id]
   );
   return {
+    id: pkg.id,
     codigoSeguimiento: pkg.codigoSeguimiento,
     estadoActual: pkg.estadoActual,
     descripcion: pkg.descripcion,
@@ -611,6 +644,10 @@ export const getTrackingByCode = async (code) => {
     repartidor: pkg.repartidor,
     sucursalOrigen: pkg.sucursalOrigen,
     sucursalDestino: pkg.sucursalDestino,
+    reprogramacionFecha: pkg.reprogramacionFecha,
+    reprogramacionHoraInicio: pkg.reprogramacionHoraInicio,
+    reprogramacionHoraFin: pkg.reprogramacionHoraFin,
+    reprogramacionDireccion: pkg.reprogramacionDireccion,
     historial: history.rows.map((row) => ({
       estado: row.estado,
       fechaHora: toIsoUtc(row.fecha_hora),

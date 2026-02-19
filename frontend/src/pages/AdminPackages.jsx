@@ -163,9 +163,18 @@ const AdminPackages = () => {
                   <p className="text-sm text-slate-500">
                     {pkg.destinatario?.nombre || clientMap[pkg.destinatarioId]}
                   </p>
+                  <p className="text-xs text-slate-400">
+                    Remitente ({pkg.remitenteTipo || "Distribuidora"}):{" "}
+                    {pkg.remitente?.nombre || "-"}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                {pkg.reprogramacionFecha && (
+                  <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                    Reprogramado
+                  </span>
+                )}
                 <span className="rounded-full bg-brand-50 px-4 py-1 text-xs font-semibold text-brand-700">
                   {pkg.estadoActual}
                 </span>

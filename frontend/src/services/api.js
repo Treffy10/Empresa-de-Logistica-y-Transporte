@@ -57,6 +57,12 @@ const apiFetch = async (path, options = {}) => {
 };
 
 export const getTracking = (code) => apiFetch(`/api/tracking/${code}`);
+
+export const reprogramarTracking = (code, payload) =>
+  apiFetch(`/api/tracking/${code}/reprogramar`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 export const getHealth = () => apiFetch("/api/health");
 
 export const login = (payload) =>
@@ -66,6 +72,7 @@ export const login = (payload) =>
   });
 
 export const listClients = () => apiFetch("/api/clients");
+export const getDniData = (dni) => apiFetch(`/api/dni/${dni}`);
 export const createClient = (payload) =>
   apiFetch("/api/clients", {
     method: "POST",
@@ -82,6 +89,12 @@ export const createPackage = (payload) =>
   });
 export const updatePackageStatus = (id, payload) =>
   apiFetch(`/api/packages/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+
+export const reprogramarPackage = (id, payload) =>
+  apiFetch(`/api/packages/${id}/reprogramar`, {
     method: "PATCH",
     body: JSON.stringify(payload)
   });

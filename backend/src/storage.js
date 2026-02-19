@@ -98,6 +98,7 @@ const buildTracking = (pkg) => {
   const destino = branches.find((b) => b.id === pkg.sucursalDestinoId);
 
   return {
+    id: pkg.id,
     codigoSeguimiento: pkg.codigoSeguimiento,
     estadoActual: pkg.estadoActual,
     descripcion: pkg.descripcion,
@@ -111,6 +112,10 @@ const buildTracking = (pkg) => {
     repartidor,
     sucursalOrigen: origen,
     sucursalDestino: destino,
+    reprogramacionFecha: pkg.reprogramacionFecha,
+    reprogramacionHoraInicio: pkg.reprogramacionHoraInicio,
+    reprogramacionHoraFin: pkg.reprogramacionHoraFin,
+    reprogramacionDireccion: pkg.reprogramacionDireccion,
     historial: pkg.historial
   };
 };
@@ -200,6 +205,21 @@ export const updatePackageStatus = (id, estado, observacion = "") => {
   if (!pkg) return null;
   pkg.estadoActual = estado;
   pkg.historial.push({ estado, fechaHora: now(), observacion });
+  return pkg;
+};
+
+export const updatePackageReprogramar = (id, { fecha, horaInicio, horaFin, direccion }) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.reprogramacionFecha = fecha;
+  pkg.reprogramacionHoraInicio = horaInicio;
+  pkg.reprogramacionHoraFin = horaFin;
+  pkg.reprogramacionDireccion = direccion || null;
+  if (direccion && String(direccion).trim()) {
+    pkg.destinoTexto = direccion.trim();
+  }
+  pkg.estadoActual = "En Tránsito";
+  pkg.historial.push({ estado: "En Tránsito", fechaHora: now(), observacion: "Reprogramado para entrega" });
   return pkg;
 };
 

@@ -6,6 +6,13 @@ import {
   listRoles,
   updateUser
 } from "../services/api.js";
+import PhoneField from "../components/PhoneField.jsx";
+import {
+  buildPhoneValue,
+  DEFAULT_PHONE_COUNTRY,
+  onlyDigits,
+  splitPhoneValue
+} from "../utils/phone.js";
 
 const AdminUserEdit = () => {
   const { id } = useParams();
@@ -15,13 +22,15 @@ const AdminUserEdit = () => {
   const [form, setForm] = useState({
     nombre: "",
     email: "",
-    telefono: "",
+    telefonoPais: DEFAULT_PHONE_COUNTRY,
+    telefonoNumero: "",
     password: "",
     rolId: "",
     sucursalId: "",
     activo: true
   });
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -38,7 +47,7 @@ const AdminUserEdit = () => {
           ...prev,
           nombre: userData.nombre || "",
           email: userData.email || "",
-          telefono: userData.telefono || "",
+          ...splitPhoneValue(userData.telefono || ""),
           rolId: userData.rolId || "",
           sucursalId: userData.sucursalId || "",
           activo: userData.activo ?? true
@@ -52,9 +61,15 @@ const AdminUserEdit = () => {
 
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;
+    setFieldErrors((prev) => ({ ...prev, [name]: "" }));
     setForm((prev) => ({
       ...prev,
-      [name]: type === "checkbox" ? checked : value
+      [name]:
+        type === "checkbox"
+          ? checked
+          : name === "telefonoNumero"
+            ? onlyDigits(value)
+            : value
     }));
   };
 
@@ -65,12 +80,29 @@ const AdminUserEdit = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
-    if (!form.nombre.trim() || !form.email.trim()) {
-      setError("Nombre y email son obligatorios.");
-      return;
+    const nextErrors = {};
+    if (
+      !form.nombre.trim() ||
+      !form.email.trim() ||
+      !form.rolId ||
+      !form.sucursalId
+    ) {
+      if (!form.nombre.trim()) nextErrors.nombre = "El nombre es obligatorio.";
+      if (!form.email.trim()) nextErrors.email = "El email es obligatorio.";
+      if (!form.rolId) nextErrors.rolId = "Selecciona un rol.";
+      if (!form.sucursalId) nextErrors.sucursalId = "Selecciona una sucursal.";
+    }
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      nextErrors.email = "Ingresa un email valido.";
     }
     if (form.password && form.password.trim().length < 6) {
-      setError("La contraseña debe tener al menos 6 caracteres.");
+      nextErrors.password = "La contraseña debe tener al menos 6 caracteres.";
+    }
+    const phone = buildPhoneValue(form.telefonoPais, form.telefonoNumero);
+    if (!phone.ok) nextErrors.telefonoNumero = phone.error;
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      setError("Revisa los campos marcados.");
       return;
     }
     setLoading(true);
@@ -78,9 +110,11 @@ const AdminUserEdit = () => {
       const payload = {
         nombre: form.nombre,
         email: form.email,
-        telefono: form.telefono,
-        rolId: form.rolId || roles[0]?.id,
-        sucursalId: form.sucursalId || branches[0]?.id,
+        telefonoPais: form.telefonoPais,
+        telefonoNumero: phone.local,
+        telefono: phone.e164,
+        rolId: form.rolId,
+        sucursalId: form.sucursalId,
         activo: form.activo
       };
       if (form.password) {
@@ -108,38 +142,45 @@ const AdminUserEdit = () => {
 
       <form onSubmit={handleSubmit} className="mt-6 grid gap-4 md:grid-cols-2">
         <label className="text-sm text-slate-600">
-          Nombre
+          Nombre *
           <input
             name="nombre"
             value={form.nombre}
             onChange={handleChange}
-            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+            className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+              fieldErrors.nombre ? "border-red-300" : "border-slate-200"
+            }`}
             placeholder="Nombre completo"
             autoComplete="off"
+            required
           />
+          {fieldErrors.nombre && (
+            <span className="mt-1 block text-xs text-red-600">{fieldErrors.nombre}</span>
+          )}
         </label>
         <label className="text-sm text-slate-600">
-          Email
+          Email *
           <input
             name="email"
             value={form.email}
             onChange={handleChange}
-            className="mt-2 w-full rounded-xl border border-slate-200 bg-transparent px-4 py-3 text-sm"
+            className={`mt-2 w-full rounded-xl border bg-transparent px-4 py-3 text-sm ${
+              fieldErrors.email ? "border-red-300" : "border-slate-200"
+            }`}
             placeholder="correo@empresa.com"
             autoComplete="new-email"
+            required
           />
+          {fieldErrors.email && (
+            <span className="mt-1 block text-xs text-red-600">{fieldErrors.email}</span>
+          )}
         </label>
-        <label className="text-sm text-slate-600">
-          Teléfono
-          <input
-            name="telefono"
-            value={form.telefono}
-            onChange={handleChange}
-            className="mt-2 w-full rounded-xl border border-slate-200 bg-transparent px-4 py-3 text-sm"
-            placeholder="Ej: 999888777"
-            autoComplete="off"
-          />
-        </label>
+        <PhoneField
+          countryValue={form.telefonoPais}
+          numberValue={form.telefonoNumero}
+          onChange={handleChange}
+          error={fieldErrors.telefonoNumero}
+        />
         <label className="text-sm text-slate-600">
           Nueva contraseña (opcional)
           <input
@@ -147,42 +188,59 @@ const AdminUserEdit = () => {
             name="password"
             value={form.password}
             onChange={handleChange}
-            className="mt-2 w-full rounded-xl border border-slate-200 bg-transparent px-4 py-3 text-sm"
+            className={`mt-2 w-full rounded-xl border bg-transparent px-4 py-3 text-sm ${
+              fieldErrors.password ? "border-red-300" : "border-slate-200"
+            }`}
             placeholder="Deja en blanco para mantener"
             autoComplete="new-password"
           />
+          {fieldErrors.password && (
+            <span className="mt-1 block text-xs text-red-600">{fieldErrors.password}</span>
+          )}
         </label>
         <label className="text-sm text-slate-600">
-          Rol
+          Rol *
           <select
             name="rolId"
             value={form.rolId}
             onChange={handleChange}
-            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+            className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+              fieldErrors.rolId ? "border-red-300" : "border-slate-200"
+            }`}
+            required
           >
-            <option value="">Seleccionar</option>
+            <option value="">Seleccionar rol</option>
             {roles.map((role) => (
               <option key={role.id} value={role.id}>
                 {role.nombre}
               </option>
             ))}
           </select>
+          {fieldErrors.rolId && (
+            <span className="mt-1 block text-xs text-red-600">{fieldErrors.rolId}</span>
+          )}
         </label>
         <label className="text-sm text-slate-600">
-          Sucursal
+          Sucursal *
           <select
             name="sucursalId"
             value={form.sucursalId}
             onChange={handleChange}
-            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+            className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+              fieldErrors.sucursalId ? "border-red-300" : "border-slate-200"
+            }`}
+            required
           >
-            <option value="">Seleccionar</option>
+            <option value="">Seleccionar sucursal</option>
             {branches.map((branch) => (
               <option key={branch.id} value={branch.id}>
                 {branch.nombre}
               </option>
             ))}
           </select>
+          {fieldErrors.sucursalId && (
+            <span className="mt-1 block text-xs text-red-600">{fieldErrors.sucursalId}</span>
+          )}
         </label>
         <label className="flex items-center gap-2 text-sm text-slate-600">
           <input
