@@ -71,6 +71,44 @@ export const login = (payload) =>
     body: JSON.stringify(payload)
   });
 
+export const register = (payload) =>
+  apiFetch("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+
+export const listClientPackages = () => apiFetch("/api/client/me/packages");
+
+export const createClientPackage = (payload) =>
+  apiFetch("/api/client/packages", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+
+export const payClientPackage = (id, metodoPago) =>
+  apiFetch(`/api/client/packages/${id}/pagar`, {
+    method: "PATCH",
+    body: JSON.stringify({ metodoPago: metodoPago || null })
+  });
+
+export const updatePackagePrecio = (id, precioEnvio) =>
+  apiFetch(`/api/packages/${id}/precio`, {
+    method: "PATCH",
+    body: JSON.stringify({ precioEnvio })
+  });
+
+export const updatePackageOperador = (id, operadorId) =>
+  apiFetch(`/api/packages/${id}/operador`, {
+    method: "PATCH",
+    body: JSON.stringify({ operadorId: operadorId || null })
+  });
+
+export const updatePackageRepartidor = (id, repartidorId) =>
+  apiFetch(`/api/packages/${id}/repartidor`, {
+    method: "PATCH",
+    body: JSON.stringify({ repartidorId: repartidorId || null })
+  });
+
 export const listClients = () => apiFetch("/api/clients");
 export const getDniData = (dni) => apiFetch(`/api/dni/${dni}`);
 export const createClient = (payload) =>

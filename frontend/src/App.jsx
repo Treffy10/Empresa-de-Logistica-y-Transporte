@@ -18,6 +18,14 @@ import AdminDistributors from "./pages/AdminDistributors.jsx";
 import AdminDistributorNew from "./pages/AdminDistributorNew.jsx";
 import AdminBranches from "./pages/AdminBranches.jsx";
 import AdminBranchNew from "./pages/AdminBranchNew.jsx";
+import ClientLayout from "./pages/ClientLayout.jsx";
+import ClientDashboard from "./pages/ClientDashboard.jsx";
+import ClientRegister from "./pages/ClientRegister.jsx";
+import ClientLogin from "./pages/ClientLogin.jsx";
+import ClientPackageNew from "./pages/ClientPackageNew.jsx";
+import ClientPackages from "./pages/ClientPackages.jsx";
+import ClientPackageDetail from "./pages/ClientPackageDetail.jsx";
+import ClientTracking from "./pages/ClientTracking.jsx";
 import { getToken, getUser } from "./services/api.js";
 
 const RequireAuth = ({ children }) => {
@@ -37,17 +45,43 @@ const RequireRole = ({ roles, children }) => {
   return children;
 };
 
+const RequireClient = ({ children }) => {
+  const token = getToken();
+  const user = getUser();
+  if (!token || user?.roleName !== "Cliente") {
+    return <Navigate to="/cliente/login" replace />;
+  }
+  return children;
+};
+
 const App = () => {
   const location = useLocation();
   const isAdmin = location.pathname.startsWith("/admin");
+  const isClient = location.pathname.startsWith("/cliente");
 
   return (
     <div className="min-h-screen flex flex-col">
-      {!isAdmin && <Navbar />}
+      {!isAdmin && !isClient && <Navbar />}
       <main className="flex-1">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/seguimiento" element={<Tracking />} />
+          <Route path="/cliente/registro" element={<ClientRegister />} />
+          <Route path="/cliente/login" element={<ClientLogin />} />
+          <Route
+            path="/cliente"
+            element={
+              <RequireClient>
+                <ClientLayout />
+              </RequireClient>
+            }
+          >
+            <Route index element={<ClientDashboard />} />
+            <Route path="enviar" element={<ClientPackageNew />} />
+            <Route path="rastrear" element={<ClientTracking />} />
+            <Route path="envios" element={<ClientPackages />} />
+            <Route path="envios/:id" element={<ClientPackageDetail />} />
+          </Route>
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route
             path="/admin/clientes/nuevo"
@@ -170,7 +204,7 @@ const App = () => {
           </Route>
         </Routes>
       </main>
-      {!isAdmin && <Footer />}
+      {!isAdmin && !isClient && <Footer />}
     </div>
   );
 };

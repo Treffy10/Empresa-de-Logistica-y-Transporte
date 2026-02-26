@@ -42,6 +42,7 @@ const sanitizeUser = (user, roleName) => ({
   rolId: user.rol_id || user.rolId || null,
   roleName: roleName || null,
   sucursalId: user.sucursal_id || user.sucursalId || null,
+  clienteId: user.cliente_id || user.clienteId || null,
   activo: user.activo
 });
 
@@ -57,7 +58,10 @@ const isPublicRoute = (req) => {
   if (!req.path.startsWith("/api")) return true;
   if (req.path === "/api/health") return true;
   if (req.path === "/api/auth/login") return true;
-  return req.path.startsWith("/api/tracking/");
+  if (req.path === "/api/auth/register") return true;
+  if (req.path.startsWith("/api/tracking/")) return true;
+  if (/^\/api\/dni\/\d+$/.test(req.path)) return true;
+  return false;
 };
 
 app.use((req, res, next) => {
@@ -167,7 +171,7 @@ const normalizeDniData = (rawData, dni) => {
 
 const ensureRoles = async () => {
   if (!repo.listRoles || !repo.createRole) return;
-  const required = ["Administrador", "Operador logístico", "Repartidor"];
+  const required = ["Administrador", "Operador logístico", "Repartidor", "Cliente"];
   const roles = await call(repo.listRoles);
   const existing = new Set(roles.map((role) => role.nombre));
   for (const name of required) {
@@ -265,6 +269,130 @@ app.post("/api/auth/login", (req, res) => {
     .catch(() => res.status(401).json({ error: "Credenciales inválidas" }));
 });
 
+app.post("/api/auth/register", async (req, res) => {
+  const { nombre, email, password, telefonoPais, telefonoNumero, tipo, documento, direccion } = req.body || {};
+  if (!textValue(nombre) || !textValue(email) || !textValue(password)) {
+    return res.status(400).json({ error: "nombre, email y contraseña son requeridos" });
+  }
+  if (!textValue(documento) || !textValue(direccion)) {
+    return res.status(400).json({ error: "documento y direccion son requeridos" });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+  }
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
+  const existing = await call(repo.getUserByEmail, email);
+  if (existing) {
+    return res.status(400).json({ error: "El email ya está registrado" });
+  }
+  await ensureRoles();
+  const roles = await call(repo.listRoles);
+  const clientRole = roles.find((r) => r.nombre === "Cliente");
+  if (!clientRole) {
+    return res.status(500).json({ error: "Rol Cliente no disponible" });
+  }
+  const cliente = await call(repo.createClient, {
+    tipo: textValue(tipo) || "persona",
+    nombre: textValue(nombre),
+    documento: textValue(documento),
+    telefono: phone.e164,
+    email: textValue(email),
+    direccion: textValue(direccion)
+  });
+  const passwordHash = await bcrypt.hash(password, 10);
+  const user = await call(repo.createUser, {
+    nombre: textValue(nombre),
+    email: textValue(email),
+    telefono: phone.e164,
+    rolId: clientRole.id,
+    sucursalId: null,
+    clienteId: cliente.id,
+    activo: true,
+    passwordHash
+  });
+  const token = crypto.randomUUID();
+  authTokens.set(token, sanitizeUser({ ...user, clienteId: cliente.id }, "Cliente"));
+  res.status(201).json({
+    token,
+    user: { ...sanitizeUser({ ...user, clienteId: cliente.id }, "Cliente"), clienteId: cliente.id }
+  });
+});
+
+app.get("/api/client/me/packages", async (req, res) => {
+  if (req.authUser?.roleName !== "Cliente" || !req.authUser?.clienteId) {
+    return res.status(403).json({ error: "Solo clientes registrados" });
+  }
+  if (!repo.listPackagesByClient) {
+    return res.json([]);
+  }
+  res.json(await call(repo.listPackagesByClient, req.authUser.clienteId));
+});
+
+app.post("/api/client/packages", async (req, res) => {
+  if (req.authUser?.roleName !== "Cliente" || !req.authUser?.clienteId) {
+    return res.status(403).json({ error: "Solo clientes registrados pueden enviar paquetes" });
+  }
+  const { destinatarioId, sucursalOrigenId, destinoTexto, descripcion, pesoKg, quienPaga } = req.body || {};
+  if (!destinatarioId || !sucursalOrigenId || !textValue(destinoTexto) || !textValue(descripcion)) {
+    return res.status(400).json({ error: "destinatarioId, sucursalOrigenId, destinoTexto y descripcion son requeridos" });
+  }
+  const peso = parseFloat(pesoKg) || 0;
+  if (peso <= 0) {
+    return res.status(400).json({ error: "El peso debe ser mayor a 0" });
+  }
+  if (String(destinatarioId) === String(req.authUser.clienteId)) {
+    return res.status(400).json({ error: "El destinatario debe ser diferente al remitente" });
+  }
+  const precioEnvio = peso <= 2 ? 10 : 0;
+  const pkg = await call(repo.createPackage, {
+    tipoEnvio: "cliente_cliente",
+    remitenteClienteId: req.authUser.clienteId,
+    destinatarioId,
+    sucursalOrigenId,
+    destinoTexto: textValue(destinoTexto),
+    descripcion: textValue(descripcion),
+    pesoKg: peso,
+    precioEnvio,
+    quienPaga: quienPaga === "destinatario" ? "destinatario" : "remitente",
+    pagado: false,
+    operadorId: null,
+    repartidorId: null
+  });
+  res.status(201).json(pkg);
+});
+
+app.patch("/api/client/packages/:id/pagar", async (req, res) => {
+  if (req.authUser?.roleName !== "Cliente" || !req.authUser?.clienteId) {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  const isRemitente = String(pkg.remitenteClienteId) === String(req.authUser.clienteId);
+  const isDestinatario = String(pkg.destinatarioId) === String(req.authUser.clienteId);
+  if (pkg.quienPaga === "remitente" && !isRemitente) {
+    return res.status(403).json({ error: "Solo el remitente puede pagar este paquete" });
+  }
+  if (pkg.quienPaga === "destinatario" && !isDestinatario) {
+    return res.status(403).json({ error: "Solo el destinatario puede pagar este paquete al recibir" });
+  }
+  if (!isRemitente && !isDestinatario) {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+  if (pkg.pagado) {
+    return res.status(400).json({ error: "El paquete ya está pagado" });
+  }
+  if (pkg.pesoKg > 2 && (!pkg.precioEnvio || pkg.precioEnvio <= 0)) {
+    return res.status(400).json({ error: "El operador debe asignar el precio antes de pagar (paquete > 2 kg)" });
+  }
+  if (!repo.markPackagePagado) {
+    return res.status(501).json({ error: "Pago no disponible" });
+  }
+  const { metodoPago } = req.body || {};
+  const updated = await call(repo.markPackagePagado, req.params.id, metodoPago);
+  res.json(updated);
+});
+
 app.get("/api/clients", async (req, res) => {
   res.json(await call(repo.listClients));
 });
@@ -306,6 +434,9 @@ app.get("/api/packages/expanded", async (req, res) => {
   if (req.authUser?.roleName === "Repartidor" && repo.listPackagesByCourier) {
     return res.json(await call(repo.listPackagesByCourier, req.authUser.id));
   }
+  if (req.authUser?.roleName === "Cliente" && req.authUser?.clienteId && repo.listPackagesByClient) {
+    return res.json(await call(repo.listPackagesByClient, req.authUser.clienteId));
+  }
   res.json(await call(repo.listPackagesDetailed, status));
 });
 
@@ -320,7 +451,90 @@ app.get("/api/packages/:id", async (req, res) => {
   ) {
     return res.status(403).json({ error: "No autorizado" });
   }
+  if (req.authUser?.roleName === "Cliente") {
+    const isRemitente = String(pkg.remitenteClienteId) === String(req.authUser.clienteId);
+    const isDestinatario = String(pkg.destinatarioId) === String(req.authUser.clienteId);
+    if (!isRemitente && !isDestinatario) {
+      return res.status(403).json({ error: "No autorizado" });
+    }
+  }
   res.json(pkg);
+});
+
+app.patch("/api/packages/:id/precio", async (req, res) => {
+  const roleName = req.authUser?.roleName;
+  if (roleName !== "Administrador" && roleName !== "Operador logístico") {
+    return res.status(403).json({ error: "Solo operador o admin pueden asignar precio" });
+  }
+  const { precioEnvio } = req.body || {};
+  const precio = parseFloat(precioEnvio);
+  if (Number.isNaN(precio) || precio < 0) {
+    return res.status(400).json({ error: "precioEnvio debe ser un número válido >= 0" });
+  }
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  if (!repo.updatePackagePrecio) {
+    return res.status(501).json({ error: "Actualización de precio no disponible" });
+  }
+  const updated = await call(repo.updatePackagePrecio, req.params.id, precio);
+  res.json(updated);
+});
+
+app.patch("/api/packages/:id/operador", async (req, res) => {
+  const roleName = req.authUser?.roleName;
+  if (roleName !== "Administrador" && roleName !== "Operador logístico") {
+    return res.status(403).json({ error: "Solo administrador o operador" });
+  }
+  const { operadorId } = req.body || {};
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  if (roleName === "Operador logístico") {
+    if (operadorId && String(operadorId) !== String(req.authUser.id)) {
+      return res.status(403).json({ error: "Solo puedes asignarte a ti mismo" });
+    }
+  }
+  if (operadorId) {
+    const operador = await call(repo.getUserById, operadorId);
+    if (!operador) return res.status(400).json({ error: "Operador inválido" });
+    const role = await call(repo.getRoleById, operador.rol_id || operador.rolId);
+    if (role?.nombre !== "Operador logístico") {
+      return res.status(400).json({ error: "El usuario debe ser operador logístico" });
+    }
+  }
+  if (!repo.updatePackageOperador) {
+    return res.status(501).json({ error: "No disponible" });
+  }
+  const updated = await call(repo.updatePackageOperador, req.params.id, operadorId || null);
+  res.json(updated);
+});
+
+app.patch("/api/packages/:id/repartidor", async (req, res) => {
+  const roleName = req.authUser?.roleName;
+  if (roleName !== "Administrador" && roleName !== "Operador logístico") {
+    return res.status(403).json({ error: "Solo administrador o operador pueden asignar repartidor" });
+  }
+  const { repartidorId } = req.body || {};
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  if (roleName === "Operador logístico") {
+    const currentOperadorId = pkg.operadorId || pkg.operador_id;
+    if (String(currentOperadorId) !== String(req.authUser.id)) {
+      return res.status(403).json({ error: "Solo puedes asignar repartidor a paquetes donde eres el operador" });
+    }
+  }
+  if (repartidorId) {
+    const repartidor = await call(repo.getUserById, repartidorId);
+    if (!repartidor) return res.status(400).json({ error: "Repartidor inválido" });
+    const role = await call(repo.getRoleById, repartidor.rol_id || repartidor.rolId);
+    if (role?.nombre !== "Repartidor") {
+      return res.status(400).json({ error: "El usuario debe ser repartidor" });
+    }
+  }
+  if (!repo.updatePackageRepartidor) {
+    return res.status(501).json({ error: "No disponible" });
+  }
+  const updated = await call(repo.updatePackageRepartidor, req.params.id, repartidorId || null);
+  res.json(updated);
 });
 
 app.post("/api/packages", async (req, res) => {

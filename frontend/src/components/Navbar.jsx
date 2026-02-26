@@ -24,9 +24,17 @@ const Navbar = () => {
             <span className="block text-xs font-medium text-slate-400">Tingo María</span>
           </span>
         </Link>
-        <Link to="/admin/login" className="text-sm font-semibold text-slate-500">
-          Acceso Admin
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link to="/cliente/login" className="text-sm font-semibold text-slate-600 hover:text-brand-600">
+            Iniciar sesión
+          </Link>
+          <Link to="/cliente/registro" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
+            Registrarse
+          </Link>
+          <Link to="/admin/login" className="text-sm font-semibold text-slate-500">
+            Acceso Admin
+          </Link>
+        </div>
       </div>
     </header>
   );

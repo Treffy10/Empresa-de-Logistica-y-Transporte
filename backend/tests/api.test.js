@@ -1,3 +1,10 @@
+/**
+ * PRUEBAS UNITARIAS DE LA API DE LOGÍSTICA
+ * =========================================
+ * Verifican el comportamiento de cada endpoint de la API REST:
+ * autenticación, autorización por roles, CRUD de entidades, permisos, etc.
+ * Usan almacenamiento en memoria (USE_DB=false) para ejecución rápida.
+ */
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
@@ -15,6 +22,10 @@ const request = async (baseUrl, path, options = {}) => {
   return { status: response.status, body, headers: response.headers };
 };
 
+/**
+ * Suite de pruebas unitarias de la API.
+ * Orden de ejecución: login → auth → tracking → usuarios → paquetes → reportes → limpieza.
+ */
 describe("API logística", () => {
   let app;
   let server;
@@ -26,6 +37,7 @@ describe("API logística", () => {
   let courierUser;
   let packageIdForCourier;
 
+  /* Inicia el servidor en un puerto aleatorio con almacenamiento en memoria. */
   before(async () => {
     process.env.USE_DB = "false";
     process.env.ADMIN_USER = "admin";
@@ -37,12 +49,19 @@ describe("API logística", () => {
     baseUrl = `http://127.0.0.1:${port}`;
   });
 
+  /* Cierra el servidor al finalizar todas las pruebas. */
   after(async () => {
     if (server) {
       server.close();
     }
   });
 
+  /**
+   * LOGIN CON ADMIN (variables de entorno)
+   * Envía POST a /api/auth/login con usuario "admin" y password "admin123"
+   * (definidos en before). Verifica: status 200, respuesta con token no vacío.
+   * El token se guarda para usarlo en las pruebas que requieren autenticación.
+   */
   it("login con admin env retorna token", async () => {
     const res = await request(baseUrl, "/api/auth/login", {
       method: "POST",
@@ -54,6 +73,11 @@ describe("API logística", () => {
     token = res.body.token;
   });
 
+  /**
+   * LOGIN INVÁLIDO
+   * Envía credenciales incorrectas (password "badpass"). Verifica que el servidor
+   * responda 401 Unauthorized y no entregue token. Prueba el rechazo de credenciales erróneas.
+   */
   it("login inválido retorna 401", async () => {
     const res = await request(baseUrl, "/api/auth/login", {
       method: "POST",
@@ -63,6 +87,12 @@ describe("API logística", () => {
     assert.equal(res.status, 401);
   });
 
+  /**
+   * TRACKING PÚBLICO (sin autenticación)
+   * Consulta GET /api/tracking/TM-2026-0001 sin token. Este endpoint es público
+   * para que los clientes rastreen sus paquetes. Verifica: status 200,
+   * codigoSeguimiento correcto, historial presente como array.
+   */
   it("tracking público retorna historial", async () => {
     const res = await request(baseUrl, "/api/tracking/TM-2026-0001");
     assert.equal(res.status, 200);
@@ -70,11 +100,21 @@ describe("API logística", () => {
     assert.ok(Array.isArray(res.body?.historial));
   });
 
+  /**
+   * PROTECCIÓN DE RUTAS AUTENTICADAS
+   * Intenta GET /api/packages/expanded sin enviar token. Verifica que el servidor
+   * responda 401, rechazando el acceso a recursos que requieren autenticación.
+   */
   it("requiere auth para listar paquetes", async () => {
     const res = await request(baseUrl, "/api/packages/expanded");
     assert.equal(res.status, 401);
   });
 
+  /**
+   * LISTADO DE PAQUETES AUTENTICADO
+   * Con el token obtenido en el login, solicita GET /api/packages/expanded.
+   * Verifica: status 200 y que el cuerpo sea un array (lista de paquetes con datos expandidos).
+   */
   it("lista paquetes con token", async () => {
     const res = await request(baseUrl, "/api/packages/expanded", {
       headers: { Authorization: `Bearer ${token}` }
@@ -83,6 +123,13 @@ describe("API logística", () => {
     assert.ok(Array.isArray(res.body));
   });
 
+  /**
+   * CREACIÓN DE USUARIOS OPERADOR Y REPARTIDOR
+   * Obtiene roles y sucursales, luego crea dos usuarios vía POST /api/users:
+   * - Operador Test (operador@test.com) con rol "Operador logístico"
+   * - Repartidor Test (repartidor@test.com) con rol "Repartidor"
+   * Verifica status 201 y que cada uno tenga id. Estos usuarios se usan en pruebas de paquetes y permisos.
+   */
   it("crea usuarios operador y repartidor", async () => {
     const roles = await request(baseUrl, "/api/roles", {
       headers: { Authorization: `Bearer ${token}` }
@@ -137,6 +184,12 @@ describe("API logística", () => {
     assert.ok(courierUser?.id);
   });
 
+  /**
+   * LOGIN DE OPERADOR Y REPARTIDOR
+   * Inicia sesión con los usuarios creados (por email y password). Verifica que
+   * ambos reciban status 200 y un token válido. Los tokens se guardan para
+   * probar permisos específicos de cada rol en las siguientes pruebas.
+   */
   it("login de operador y repartidor", async () => {
     const resOperator = await request(baseUrl, "/api/auth/login", {
       method: "POST",
@@ -163,6 +216,12 @@ describe("API logística", () => {
     assert.ok(courierToken);
   });
 
+  /**
+   * CREACIÓN DE CLIENTE Y DISTRIBUIDORA
+   * Crea un cliente (persona, DNI, dirección, etc.) y una distribuidora con
+   * POST /api/clients y POST /api/distributors. Son datos de prueba necesarios
+   * para crear paquetes en las pruebas siguientes (remitente, destinatario).
+   */
   it("crea cliente y distribuidora", async () => {
     const resClient = await request(baseUrl, "/api/clients", {
       method: "POST",
@@ -195,6 +254,12 @@ describe("API logística", () => {
     assert.equal(resDistributor.status, 201);
   });
 
+  /**
+   * AUTOASIGNACIÓN DE OPERADOR AL CREAR PAQUETE
+   * Crea un paquete usando el token del Operador (sin enviar operadorId).
+   * El backend debe autoasignar al operador logueado. Verifica que res.body.operadorId
+   * coincida con operatorUser.id. Prueba la lógica de asignación automática por rol.
+   */
   it("crear paquete asigna operador automáticamente", async () => {
     const res = await request(baseUrl, "/api/packages", {
       method: "POST",
@@ -212,6 +277,12 @@ describe("API logística", () => {
     assert.equal(res.body?.operadorId, operatorUser.id);
   });
 
+  /**
+   * CREACIÓN DE PAQUETE CON REPARTIDOR ASIGNADO
+   * Crea un paquete con operadorId y repartidorId explícitos. Verifica status 201
+   * y que el paquete tenga id. Guarda packageIdForCourier para probar que el
+   * repartidor solo pueda actuar sobre paquetes asignados a él.
+   */
   it("crear paquete con repartidor asignado", async () => {
     const res = await request(baseUrl, "/api/packages", {
       method: "POST",
@@ -231,6 +302,12 @@ describe("API logística", () => {
     assert.ok(packageIdForCourier);
   });
 
+  /**
+   * FLUJO CLIENTE A CLIENTE
+   * Crea un paquete con tipoEnvio "cliente_cliente". En este modo el remitente
+   * es un cliente (remitenteClienteId), no una distribuidora (remitenteId).
+   * Verifica que res.body tenga tipoEnvio y remitenteClienteId correctos.
+   */
   it("crear paquete cliente a cliente", async () => {
     const res = await request(baseUrl, "/api/packages", {
       method: "POST",
@@ -251,6 +328,12 @@ describe("API logística", () => {
     assert.equal(res.body?.remitenteClienteId, "c2");
   });
 
+  /**
+   * FILTRO POR REPARTIDOR (Mis entregas)
+   * GET /api/couriers/me/packages con token de repartidor. El backend debe
+   * filtrar y devolver solo paquetes donde repartidor_id = usuario logueado.
+   * Verifica que cada paquete en la lista tenga repartidor.id === courierUser.id.
+   */
   it("repartidor ve solo sus entregas", async () => {
     const res = await request(baseUrl, "/api/couriers/me/packages", {
       headers: { Authorization: `Bearer ${courierToken}` }
@@ -260,6 +343,11 @@ describe("API logística", () => {
     assert.ok(res.body.every((pkg) => pkg.repartidor?.id === courierUser.id));
   });
 
+  /**
+   * RESTRICCIÓN: REPARTIDOR NO PUEDE CREAR PAQUETES
+   * Intenta POST /api/packages con token de repartidor. El backend debe
+   * rechazar con 403 Forbidden, ya que solo Admin y Operador pueden crear paquetes.
+   */
   it("repartidor no puede crear paquetes", async () => {
     const res = await request(baseUrl, "/api/packages", {
       method: "POST",
@@ -274,6 +362,13 @@ describe("API logística", () => {
     assert.equal(res.status, 403);
   });
 
+  /**
+   * PERMISOS DEL REPARTIDOR EN ACTUALIZACIÓN DE ESTADO
+   * 1) Intenta PATCH estado "En Tránsito" con token repartidor → debe dar 403
+   *    (solo Admin/Operador marcan salida).
+   * 2) Intenta PATCH estado "Entregado" con token repartidor → debe dar 200
+   *    (el repartidor puede confirmar entrega de sus paquetes asignados).
+   */
   it("repartidor puede marcar entrega y no puede En Tránsito", async () => {
     const resDenied = await request(
       baseUrl,
@@ -298,6 +393,11 @@ describe("API logística", () => {
     assert.equal(resOk.status, 200);
   });
 
+  /**
+   * ENDPOINTS DE CATÁLOGO
+   * Verifica que GET /api/roles, /api/branches, /api/operators, /api/couriers
+   * respondan 200 con token admin. Son listas usadas en formularios del panel.
+   */
   it("lista roles, sucursales y operadores/repartidores", async () => {
     const roles = await request(baseUrl, "/api/roles", {
       headers: { Authorization: `Bearer ${token}` }
@@ -320,6 +420,12 @@ describe("API logística", () => {
     assert.equal(couriers.status, 200);
   });
 
+  /**
+   * DESCARGA DE REPORTES
+   * GET /api/reports/packages?format=csv y ?format=xlsx con token admin.
+   * Verifica status 200 en ambos. Los reportes incluyen todos los paquetes
+   * con datos expandidos para exportación.
+   */
   it("descarga reportes CSV y XLSX", async () => {
     const resCsv = await request(
       baseUrl,
@@ -340,6 +446,12 @@ describe("API logística", () => {
     assert.equal(resXlsx.status, 200);
   });
 
+  /**
+   * CRUD DE USUARIOS (editar y eliminar)
+   * 1) PUT /api/users/:id: actualiza nombre y teléfono del operador. Verifica 200.
+   * 2) DELETE /api/users/:id: elimina el operador. Verifica 200 y body.ok === true.
+   * Solo el Admin puede realizar estas operaciones.
+   */
   it("edita y elimina usuario", async () => {
     const resUpdate = await request(baseUrl, `/api/users/${operatorUser.id}`, {
       method: "PUT",
@@ -365,6 +477,11 @@ describe("API logística", () => {
     assert.equal(del.body?.ok, true);
   });
 
+  /**
+   * LIMPIEZA: ELIMINAR REPARTIDOR DE PRUEBA
+   * DELETE /api/users/:id del repartidor creado. Deja el entorno limpio
+   * tras las pruebas. Verifica 200 y body.ok === true.
+   */
   it("elimina repartidor de prueba", async () => {
     const del = await request(baseUrl, `/api/users/${courierUser.id}`, {
       method: "DELETE",

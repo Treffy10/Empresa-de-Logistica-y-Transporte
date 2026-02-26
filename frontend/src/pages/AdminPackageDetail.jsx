@@ -5,7 +5,12 @@ import {
   getPackageById,
   getUser,
   updatePackageStatus,
-  reprogramarPackage
+  reprogramarPackage,
+  updatePackagePrecio,
+  updatePackageOperador,
+  updatePackageRepartidor,
+  listOperators,
+  listCouriers
 } from "../services/api.js";
 
 const normalizeDate = (value) => {
@@ -68,6 +73,16 @@ const AdminPackageDetail = () => {
     fecha: "",
     horaInicio: "09:00"
   });
+  const [precioForm, setPrecioForm] = useState("");
+  const [precioLoading, setPrecioLoading] = useState(false);
+  const [operators, setOperators] = useState([]);
+  const [couriers, setCouriers] = useState([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+
+  const canSetPrecio =
+    (roleName === "Administrador" || roleName === "Operador logístico") &&
+    pkg?.pesoKg > 2 &&
+    (!pkg?.precioEnvio || pkg.precioEnvio <= 0);
 
   const loadPackage = async () => {
     try {
@@ -81,6 +96,25 @@ const AdminPackageDetail = () => {
   useEffect(() => {
     loadPackage();
   }, [id]);
+
+  useEffect(() => {
+    if (roleName === "Administrador" || roleName === "Operador logístico") {
+      Promise.all([listOperators(), listCouriers()])
+        .then(([ops, coups]) => {
+          setOperators(ops);
+          setCouriers(coups);
+        })
+        .catch(() => {});
+    }
+  }, [roleName]);
+
+  useEffect(() => {
+    if (pkg?.pesoKg > 2 && (!pkg?.precioEnvio || pkg.precioEnvio <= 0)) {
+      setPrecioForm("");
+    } else if (pkg?.precioEnvio) {
+      setPrecioForm(String(pkg.precioEnvio));
+    }
+  }, [pkg?.pesoKg, pkg?.precioEnvio]);
 
 
   useEffect(() => {
@@ -220,6 +254,59 @@ const AdminPackageDetail = () => {
     setReprogramarForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const isOperadorDelPaquete =
+    pkg?.operador?.id && String(pkg.operador.id) === String(user?.id);
+
+  const handleAssignOperador = async (operadorId) => {
+    setAssignLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      await updatePackageOperador(pkg.id, operadorId || null);
+      setNotice("Operador asignado.");
+      await loadPackage();
+    } catch (err) {
+      setError(err.message || "No se pudo asignar.");
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const handleAssignRepartidor = async (repartidorId) => {
+    setAssignLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      await updatePackageRepartidor(pkg.id, repartidorId || null);
+      setNotice("Repartidor asignado.");
+      await loadPackage();
+    } catch (err) {
+      setError(err.message || "No se pudo asignar.");
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const handleSetPrecio = async () => {
+    const precio = parseFloat(precioForm);
+    if (Number.isNaN(precio) || precio < 0) {
+      setNotice("Ingresa un precio válido.");
+      return;
+    }
+    setPrecioLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      await updatePackagePrecio(pkg.id, precio);
+      setNotice("Precio asignado correctamente.");
+      await loadPackage();
+    } catch (err) {
+      setError(err.message || "No se pudo asignar el precio.");
+    } finally {
+      setPrecioLoading(false);
+    }
+  };
+
   const confirmReprogramar = async () => {
     const { direccion, fecha, horaInicio } = reprogramarForm;
     if (!fecha || !horaInicio) {
@@ -327,26 +414,87 @@ const AdminPackageDetail = () => {
               <p className="text-sm font-semibold text-slate-700">
                 Operador asignado
               </p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">
-                {pkg.operador?.nombre || "Sin asignar"}
-              </p>
-              <div className="mt-3 text-sm text-slate-500">
-                <p>{pkg.operador?.telefono || "Teléfono no registrado"}</p>
-                {pkg.operador?.email && <p>{pkg.operador.email}</p>}
-              </div>
+              {roleName === "Administrador" ? (
+                <div className="mt-2">
+                  <select
+                    value={pkg.operador?.id || ""}
+                    onChange={(e) => handleAssignOperador(e.target.value || null)}
+                    disabled={assignLoading}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                  >
+                    <option value="">Sin asignar</option>
+                    {operators.map((op) => (
+                      <option key={op.id} value={op.id}>
+                        {op.nombre}
+                      </option>
+                    ))}
+                  </select>
+                  {pkg.operador && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      {pkg.operador.telefono || ""} {pkg.operador.email || ""}
+                    </p>
+                  )}
+                </div>
+              ) : roleName === "Operador logístico" && !pkg.operador?.id ? (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleAssignOperador(user.id)}
+                    disabled={assignLoading}
+                    className="w-full rounded-xl border-2 border-dashed border-brand-300 bg-brand-50 px-4 py-3 text-sm font-semibold text-brand-700 hover:bg-brand-100"
+                  >
+                    {assignLoading ? "Asignando..." : "Asignarme a este paquete"}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <p className="mt-2 text-lg font-semibold text-slate-900">
+                    {pkg.operador?.nombre || "Sin asignar"}
+                  </p>
+                  <div className="mt-3 text-sm text-slate-500">
+                    <p>{pkg.operador?.telefono || "Teléfono no registrado"}</p>
+                    {pkg.operador?.email && <p>{pkg.operador.email}</p>}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100">
               <p className="text-sm font-semibold text-slate-700">
                 Repartidor asignado
               </p>
-              <p className="mt-2 text-lg font-semibold text-slate-900">
-                {pkg.repartidor?.nombre || "Sin asignar"}
-              </p>
-              <div className="mt-3 text-sm text-slate-500">
-                <p>{pkg.repartidor?.telefono || "Teléfono no registrado"}</p>
-                {pkg.repartidor?.email && <p>{pkg.repartidor.email}</p>}
-              </div>
+              {(roleName === "Administrador" || (roleName === "Operador logístico" && isOperadorDelPaquete)) ? (
+                <div className="mt-2">
+                  <select
+                    value={pkg.repartidor?.id || ""}
+                    onChange={(e) => handleAssignRepartidor(e.target.value || null)}
+                    disabled={assignLoading}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                  >
+                    <option value="">Sin asignar</option>
+                    {couriers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre}
+                      </option>
+                    ))}
+                  </select>
+                  {pkg.repartidor && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      {pkg.repartidor.telefono || ""} {pkg.repartidor.email || ""}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <p className="mt-2 text-lg font-semibold text-slate-900">
+                    {pkg.repartidor?.nombre || "Sin asignar"}
+                  </p>
+                  <div className="mt-3 text-sm text-slate-500">
+                    <p>{pkg.repartidor?.telefono || "Teléfono no registrado"}</p>
+                    {pkg.repartidor?.email && <p>{pkg.repartidor.email}</p>}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100">
@@ -374,6 +522,15 @@ const AdminPackageDetail = () => {
 
             <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100">
               <p className="text-sm font-semibold text-slate-700">Detalles</p>
+              {(pkg.pesoKg || 0) > 0 && (
+                <p className="mt-2 text-sm text-slate-600">
+                  Peso: {pkg.pesoKg} kg • Precio: {pkg.precioEnvio ?? 0} soles
+                  {pkg.quienPaga && (
+                    <span className="text-slate-500"> • Paga: {pkg.quienPaga === "remitente" ? "Remitente" : "Destinatario"}</span>
+                  )}
+                  {pkg.pagado && <span className="text-brand-600 font-semibold"> • Pagado</span>}
+                </p>
+              )}
               <p className="mt-3 text-sm text-slate-500">Descripción</p>
               <p className="text-slate-800">
                 {pkg.descripcion || "Sin descripción"}
@@ -404,6 +561,33 @@ const AdminPackageDetail = () => {
           </div>
 
           <div className="space-y-6">
+            {canSetPrecio && (
+              <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100">
+                <p className="text-sm font-semibold text-slate-700">Asignar precio (paquete &gt; 2 kg)</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  El operador debe asignar el precio antes de que el cliente pueda pagar.
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={precioForm}
+                    onChange={(e) => setPrecioForm(e.target.value)}
+                    placeholder="Precio en soles"
+                    className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSetPrecio}
+                    disabled={precioLoading}
+                    className="rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {precioLoading ? "Guardando..." : "Asignar"}
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100 text-center">
               <p className="text-sm font-semibold text-slate-700">Acciones</p>
               <div className="mt-4 flex flex-col gap-2">

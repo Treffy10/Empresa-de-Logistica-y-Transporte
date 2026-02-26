@@ -52,6 +52,11 @@ const mapPackageRow = (row) => ({
   reprogramacionHoraInicio: row.reprogramacion_hora_inicio,
   reprogramacionHoraFin: row.reprogramacion_hora_fin,
   reprogramacionDireccion: row.reprogramacion_direccion,
+  pesoKg: parseFloat(row.peso_kg) || 0,
+  precioEnvio: parseFloat(row.precio_envio) || 0,
+  quienPaga: row.quien_paga || "remitente",
+  pagado: Boolean(row.pagado),
+  metodoPago: row.metodo_pago || null,
   creadoEn: toIsoUtc(row.creado_en)
 });
 
@@ -224,7 +229,7 @@ export const getRoleById = async (id) => {
 
 export const listUsers = async () => {
   const { rows } = await query(
-    "SELECT id, nombre, email, telefono, rol_id, sucursal_id, activo, creado_en FROM usuarios ORDER BY id DESC"
+    "SELECT id, nombre, email, telefono, rol_id, sucursal_id, cliente_id, activo, creado_en FROM usuarios ORDER BY id DESC"
   );
   return rows.map((row) => ({
     id: row.id,
@@ -233,6 +238,7 @@ export const listUsers = async () => {
     telefono: row.telefono,
     rolId: row.rol_id,
     sucursalId: row.sucursal_id,
+    clienteId: row.cliente_id,
     activo: row.activo,
     creadoEn: row.creado_en
   }));
@@ -301,15 +307,16 @@ export const listCouriers = async () => {
 
 export const createUser = async (data) => {
   const { rows } = await query(
-    `INSERT INTO usuarios (nombre, email, telefono, rol_id, sucursal_id, activo, password_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO usuarios (nombre, email, telefono, rol_id, sucursal_id, cliente_id, activo, password_hash)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
       data.nombre || "Usuario",
       data.email || "",
       data.telefono || "",
       data.rolId,
-      data.sucursalId,
+      data.sucursalId ?? null,
+      data.clienteId ?? null,
       data.activo ?? true,
       data.passwordHash || ""
     ]
@@ -322,6 +329,7 @@ export const createUser = async (data) => {
     telefono: row.telefono,
     rolId: row.rol_id,
     sucursalId: row.sucursal_id,
+    clienteId: row.cliente_id,
     activo: row.activo,
     creadoEn: row.creado_en
   };
@@ -442,7 +450,74 @@ export const listPackagesByCourier = async (courierId) => {
 
 export const getPackageById = async (id) => {
   const { rows } = await query("SELECT * FROM paquetes WHERE id = $1", [id]);
-  return rows[0] || null;
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
+export const listPackagesByClient = async (clienteId) => {
+  const baseQuery = `
+    SELECT
+      p.*,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.id ELSE r.id END as remitente_ref_id,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.nombre ELSE r.nombre END as remitente_nombre,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN NULL ELSE r.razon_social END as remitente_razon_social,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.documento ELSE NULL END as remitente_documento,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.telefono ELSE r.telefono END as remitente_telefono,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.direccion ELSE r.direccion END as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN 'Cliente' ELSE 'Distribuidora' END as remitente_tipo,
+      d.id as destinatario_id, d.nombre as destinatario_nombre, d.documento as destinatario_documento,
+      d.telefono as destinatario_telefono, d.email as destinatario_email, d.direccion as destinatario_direccion,
+      u.id as operador_id, u.nombre as operador_nombre, u.telefono as operador_telefono, u.email as operador_email,
+      ur.id as repartidor_id, ur.nombre as repartidor_nombre, ur.telefono as repartidor_telefono, ur.email as repartidor_email,
+      so.id as suc_origen_id, so.nombre as suc_origen_nombre, so.direccion as suc_origen_direccion,
+      sd.id as suc_destino_id, sd.nombre as suc_destino_nombre, sd.direccion as suc_destino_direccion
+    FROM paquetes p
+    LEFT JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN clientes rc ON rc.id = p.remitente_cliente_id
+    JOIN clientes d ON d.id = p.destinatario_id
+    LEFT JOIN usuarios u ON u.id = p.operador_id
+    LEFT JOIN usuarios ur ON ur.id = p.repartidor_id
+    JOIN sucursales so ON so.id = p.sucursal_origen_id
+    LEFT JOIN sucursales sd ON sd.id = p.sucursal_destino_id
+    WHERE (p.remitente_cliente_id = $1 OR p.destinatario_id = $1)
+    ORDER BY p.id DESC
+  `;
+  const { rows } = await query(baseQuery, [clienteId]);
+  return rows.map(mapPackageDetailsRow);
+};
+
+export const updatePackagePrecio = async (id, precioEnvio) => {
+  const { rows } = await query(
+    "UPDATE paquetes SET precio_envio = $1 WHERE id = $2 RETURNING *",
+    [precioEnvio, id]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
+export const updatePackageOperador = async (id, operadorId) => {
+  const { rows } = await query(
+    "UPDATE paquetes SET operador_id = $1 WHERE id = $2 RETURNING *",
+    [operadorId || null, id]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
+export const updatePackageRepartidor = async (id, repartidorId) => {
+  const { rows } = await query(
+    "UPDATE paquetes SET repartidor_id = $1 WHERE id = $2 RETURNING *",
+    [repartidorId || null, id]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
+export const markPackagePagado = async (id, metodoPago = null) => {
+  const validMetodo = ["tarjeta", "yape", "efectivo"].includes(metodoPago)
+    ? metodoPago
+    : null;
+  const { rows } = await query(
+    "UPDATE paquetes SET pagado = true, metodo_pago = $1 WHERE id = $2 RETURNING *",
+    [validMetodo, id]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
 };
 
 export const getPackageDetailsById = async (id) => {
@@ -511,9 +586,13 @@ export const createPackage = async (data) => {
           sucursal_destino_id,
           destino_texto,
           descripcion,
-          estado_actual
+          estado_actual,
+          peso_kg,
+          precio_envio,
+          quien_paga,
+          pagado
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING *`,
         [
           code,
@@ -527,7 +606,11 @@ export const createPackage = async (data) => {
           data.sucursalDestinoId || null,
           data.destinoTexto || "",
           data.descripcion || "",
-          "En Almacén"
+          "En Almacén",
+          data.pesoKg ?? 0,
+          data.precioEnvio ?? 10,
+          data.quienPaga || "remitente",
+          data.pagado ?? false
         ]
       );
       pkgRow = rows[0];

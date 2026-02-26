@@ -5,7 +5,8 @@ const now = () => new Date().toISOString();
 const roles = [
   { id: "r1", nombre: "Administrador" },
   { id: "r2", nombre: "Operador logístico" },
-  { id: "r3", nombre: "Repartidor" }
+  { id: "r3", nombre: "Repartidor" },
+  { id: "r4", nombre: "Cliente" }
 ];
 
 const statuses = ["En Almacén", "En Tránsito", "Entregado", "Intento fallido"];
@@ -171,6 +172,15 @@ export const listPackagesByCourier = (courierId) =>
     .filter((pkg) => pkg.repartidorId === courierId)
     .map(buildPackageDetails);
 
+export const listPackagesByClient = (clienteId) =>
+  packages
+    .filter(
+      (pkg) =>
+        String(pkg.remitenteClienteId) === String(clienteId) ||
+        String(pkg.destinatarioId) === String(clienteId)
+    )
+    .map(buildPackageDetails);
+
 const generateTrackingCode = () =>
   `TM-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`;
 
@@ -193,6 +203,10 @@ export const createPackage = (data) => {
     destinoTexto: data.destinoTexto || "",
     descripcion: data.descripcion || "",
     estadoActual: "En Almacén",
+    pesoKg: data.pesoKg ?? 0,
+    precioEnvio: data.precioEnvio ?? 10,
+    quienPaga: data.quienPaga || "remitente",
+    pagado: data.pagado ?? false,
     creadoEn: now(),
     historial: [{ estado: "En Almacén", fechaHora: now() }]
   };
@@ -281,6 +295,7 @@ export const createUser = (data) => {
     telefono: data.telefono || "",
     rolId: data.rolId || roles[0].id,
     sucursalId: data.sucursalId || branches[0].id,
+    clienteId: data.clienteId || null,
     activo: data.activo ?? true,
     passwordHash: data.passwordHash || "",
     creadoEn: now()
@@ -361,6 +376,37 @@ export const getClientById = (id) =>
 
 export const getBranchById = (id) =>
   branches.find((branch) => branch.id === id) || null;
+
+export const updatePackagePrecio = (id, precioEnvio) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.precioEnvio = precioEnvio;
+  return pkg;
+};
+
+export const updatePackageOperador = (id, operadorId) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.operadorId = operadorId || null;
+  return pkg;
+};
+
+export const updatePackageRepartidor = (id, repartidorId) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.repartidorId = repartidorId || null;
+  return pkg;
+};
+
+export const markPackagePagado = (id, metodoPago = null) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.pagado = true;
+  pkg.metodoPago = ["tarjeta", "yape", "efectivo"].includes(metodoPago)
+    ? metodoPago
+    : null;
+  return pkg;
+};
 
 export const getRoleById = (id) =>
   roles.find((role) => role.id === id) || null;
