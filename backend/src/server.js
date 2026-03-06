@@ -27,6 +27,9 @@ const seedAdminName = process.env.ADMIN_SEED_NAME || "Walter";
 const seedAdminEmail =
   process.env.ADMIN_SEED_EMAIL || "wruizmarin21@gmail.com";
 const seedAdminPass = process.env.ADMIN_SEED_PASS || "wally21";
+const dniApiUrl =
+  process.env.DNI_API_URL || "https://api.decolecta.com/v1/reniec/dni";
+const dniApiToken = process.env.DNI_API_TOKEN || "";
 const authTokens = new Map();
 
 app.use(cors());
@@ -39,6 +42,7 @@ const sanitizeUser = (user, roleName) => ({
   rolId: user.rol_id || user.rolId || null,
   roleName: roleName || null,
   sucursalId: user.sucursal_id || user.sucursalId || null,
+  clienteId: user.cliente_id || user.clienteId || null,
   activo: user.activo
 });
 
@@ -54,7 +58,10 @@ const isPublicRoute = (req) => {
   if (!req.path.startsWith("/api")) return true;
   if (req.path === "/api/health") return true;
   if (req.path === "/api/auth/login") return true;
-  return req.path.startsWith("/api/tracking/");
+  if (req.path === "/api/auth/register") return true;
+  if (req.path.startsWith("/api/tracking/")) return true;
+  if (/^\/api\/dni\/\d+$/.test(req.path)) return true;
+  return false;
 };
 
 app.use((req, res, next) => {
@@ -91,9 +98,83 @@ const escapeCsv = (value) => {
   return `"${str.replace(/"/g, '""')}"`;
 };
 
+const PHONE_RULES = {
+  PE: { name: "Peru", dialCode: "51", digits: 9 },
+  CL: { name: "Chile", dialCode: "56", digits: 9 },
+  CO: { name: "Colombia", dialCode: "57", digits: 10 },
+  EC: { name: "Ecuador", dialCode: "593", digits: 9 },
+  MX: { name: "Mexico", dialCode: "52", digits: 10 },
+  US: { name: "Estados Unidos", dialCode: "1", digits: 10 },
+  BO: { name: "Bolivia", dialCode: "591", digits: 8 },
+  AR: { name: "Argentina", dialCode: "54", digits: 10 },
+  BR: { name: "Brasil", dialCode: "55", digits: 11 }
+};
+
+const textValue = (value) => String(value || "").trim();
+
+const resolvePhone = (payload) => {
+  const countryIso = textValue(payload.telefonoPais).toUpperCase();
+  const source = textValue(payload.telefonoNumero || payload.telefono);
+  if (!countryIso || !source) {
+    return { ok: false, error: "telefonoPais y telefonoNumero son requeridos" };
+  }
+  const rule = PHONE_RULES[countryIso];
+  if (!rule) {
+    return { ok: false, error: "Pais de telefono no soportado" };
+  }
+  const digitsOnly = source.replace(/\D/g, "");
+  const local =
+    digitsOnly.startsWith(rule.dialCode) &&
+    digitsOnly.length === rule.dialCode.length + rule.digits
+      ? digitsOnly.slice(rule.dialCode.length)
+      : digitsOnly;
+  if (local.length !== rule.digits) {
+    return {
+      ok: false,
+      error: `El telefono para ${rule.name} debe tener ${rule.digits} digitos`
+    };
+  }
+  return {
+    ok: true,
+    countryIso,
+    local,
+    e164: `+${rule.dialCode}${local}`
+  };
+};
+
+const normalizeDniData = (rawData, dni) => {
+  const data = rawData || {};
+  const nombres = textValue(data.nombres || data.name || data.first_name);
+  const apellidoPaterno = textValue(
+    data.apellidoPaterno ||
+      data.apellido_paterno ||
+      data.father_last_name ||
+      data.first_last_name
+  );
+  const apellidoMaterno = textValue(
+    data.apellidoMaterno ||
+      data.apellido_materno ||
+      data.mother_last_name ||
+      data.second_last_name
+  );
+  const nombreCompleto = textValue(
+    data.nombreCompleto ||
+      data.nombre_completo ||
+      data.full_name ||
+      [nombres, apellidoPaterno, apellidoMaterno].filter(Boolean).join(" ")
+  );
+  return {
+    dni,
+    nombres,
+    apellidoPaterno,
+    apellidoMaterno,
+    nombreCompleto
+  };
+};
+
 const ensureRoles = async () => {
   if (!repo.listRoles || !repo.createRole) return;
-  const required = ["Administrador", "Operador logístico", "Repartidor"];
+  const required = ["Administrador", "Operador logístico", "Repartidor", "Cliente"];
   const roles = await call(repo.listRoles);
   const existing = new Set(roles.map((role) => role.nombre));
   for (const name of required) {
@@ -174,13 +255,15 @@ app.post("/api/auth/login", (req, res) => {
       if (!user || user.activo === false) {
         throw new Error("Credenciales inválidas");
       }
-      const ok = await bcrypt.compare(password, user.password_hash || "");
+      const ok = await bcrypt.compare(
+        password,
+        user.password_hash || user.passwordHash || ""
+      );
       if (!ok) {
         throw new Error("Credenciales inválidas");
       }
-      const role = user.rol_id
-        ? await call(repo.getRoleById, user.rol_id)
-        : null;
+      const roleId = user.rol_id || user.rolId;
+      const role = roleId ? await call(repo.getRoleById, roleId) : null;
       const roleName = role?.nombre || null;
       const token = crypto.randomUUID();
       authTokens.set(token, sanitizeUser(user, roleName));
@@ -189,12 +272,209 @@ app.post("/api/auth/login", (req, res) => {
     .catch(() => res.status(401).json({ error: "Credenciales inválidas" }));
 });
 
+app.post("/api/auth/register", async (req, res) => {
+  const { nombre, email, password, telefonoPais, telefonoNumero, tipo, documento, direccion } = req.body || {};
+  if (!textValue(nombre) || !textValue(email) || !textValue(password)) {
+    return res.status(400).json({ error: "nombre, email y contraseña son requeridos" });
+  }
+  if (!textValue(documento) || !textValue(direccion)) {
+    return res.status(400).json({ error: "documento y direccion son requeridos" });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+  }
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
+  const existing = await call(repo.getUserByEmail, email);
+  if (existing) {
+    return res.status(400).json({ error: "El email ya está registrado" });
+  }
+  await ensureRoles();
+  const roles = await call(repo.listRoles);
+  const clientRole = roles.find((r) => r.nombre === "Cliente");
+  if (!clientRole) {
+    return res.status(500).json({ error: "Rol Cliente no disponible" });
+  }
+  let cliente;
+  const existingClient = repo.getClientByDocumento
+    ? await call(repo.getClientByDocumento, documento)
+    : null;
+  if (existingClient) {
+    cliente = {
+      id: existingClient.id,
+      tipo: existingClient.tipo,
+      nombre: existingClient.nombre,
+      documento: existingClient.documento,
+      telefono: existingClient.telefono,
+      email: existingClient.email,
+      direccion: existingClient.direccion
+    };
+    if (repo.updateClient) {
+      await call(repo.updateClient, existingClient.id, {
+        nombre: textValue(nombre),
+        telefono: phone.e164,
+        email: textValue(email),
+        direccion: textValue(direccion)
+      });
+    }
+  } else {
+    cliente = await call(repo.createClient, {
+      tipo: textValue(tipo) || "persona",
+      nombre: textValue(nombre),
+      documento: textValue(documento),
+      telefono: phone.e164,
+      email: textValue(email),
+      direccion: textValue(direccion)
+    });
+  }
+  const passwordHash = await bcrypt.hash(password, 10);
+  const user = await call(repo.createUser, {
+    nombre: textValue(nombre),
+    email: textValue(email),
+    telefono: phone.e164,
+    rolId: clientRole.id,
+    sucursalId: null,
+    clienteId: cliente.id,
+    activo: true,
+    passwordHash
+  });
+  const token = crypto.randomUUID();
+  authTokens.set(token, sanitizeUser({ ...user, clienteId: cliente.id }, "Cliente"));
+  res.status(201).json({
+    token,
+    user: { ...sanitizeUser({ ...user, clienteId: cliente.id }, "Cliente"), clienteId: cliente.id }
+  });
+});
+
+app.get("/api/client/me/packages", async (req, res) => {
+  if (req.authUser?.roleName !== "Cliente" || !req.authUser?.clienteId) {
+    return res.status(403).json({ error: "Solo clientes registrados" });
+  }
+  if (!repo.listPackagesByClient) {
+    return res.json([]);
+  }
+  res.json(await call(repo.listPackagesByClient, req.authUser.clienteId));
+});
+
+app.post("/api/client/packages", async (req, res) => {
+  if (req.authUser?.roleName !== "Cliente" || !req.authUser?.clienteId) {
+    return res.status(403).json({ error: "Solo clientes registrados pueden enviar paquetes" });
+  }
+  const { destinatarioId, sucursalOrigenId, destinoTexto, descripcion, pesoKg, quienPaga } = req.body || {};
+  if (!destinatarioId || !sucursalOrigenId || !textValue(destinoTexto) || !textValue(descripcion)) {
+    return res.status(400).json({ error: "destinatarioId, sucursalOrigenId, destinoTexto y descripcion son requeridos" });
+  }
+  const peso = parseFloat(pesoKg) || 0;
+  if (peso <= 0) {
+    return res.status(400).json({ error: "El peso debe ser mayor a 0" });
+  }
+  if (String(destinatarioId) === String(req.authUser.clienteId)) {
+    return res.status(400).json({ error: "El destinatario debe ser diferente al remitente" });
+  }
+  const precioEnvio = peso <= 2 ? 10 : 0;
+  const pkg = await call(repo.createPackage, {
+    tipoEnvio: "cliente_cliente",
+    remitenteClienteId: req.authUser.clienteId,
+    destinatarioId,
+    sucursalOrigenId,
+    destinoTexto: textValue(destinoTexto),
+    descripcion: textValue(descripcion),
+    pesoKg: peso,
+    precioEnvio,
+    quienPaga: quienPaga === "destinatario" ? "destinatario" : "remitente",
+    pagado: false,
+    operadorId: null,
+    repartidorId: null
+  });
+  res.status(201).json(pkg);
+});
+
+app.patch("/api/client/packages/:id/pagar", async (req, res) => {
+  if (req.authUser?.roleName !== "Cliente" || !req.authUser?.clienteId) {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  const isRemitente = String(pkg.remitenteClienteId) === String(req.authUser.clienteId);
+  const isDestinatario = String(pkg.destinatarioId) === String(req.authUser.clienteId);
+  if (pkg.quienPaga === "remitente" && !isRemitente) {
+    return res.status(403).json({ error: "Solo el remitente puede pagar este paquete" });
+  }
+  if (pkg.quienPaga === "destinatario" && !isDestinatario) {
+    return res.status(403).json({ error: "Solo el destinatario puede pagar este paquete al recibir" });
+  }
+  if (!isRemitente && !isDestinatario) {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+  if (pkg.pagado) {
+    return res.status(400).json({ error: "El paquete ya está pagado" });
+  }
+  if (pkg.pesoKg > 2 && (!pkg.precioEnvio || pkg.precioEnvio <= 0)) {
+    return res.status(400).json({ error: "El operador debe asignar el precio antes de pagar (paquete > 2 kg)" });
+  }
+  if (!repo.markPackagePagado) {
+    return res.status(501).json({ error: "Pago no disponible" });
+  }
+  const { metodoPago } = req.body || {};
+  const updated = await call(repo.markPackagePagado, req.params.id, metodoPago);
+  res.json(updated);
+});
+
+app.patch("/api/packages/:id/registrar-pago-destino", async (req, res) => {
+  if (req.authUser?.roleName !== "Repartidor") {
+    return res.status(403).json({ error: "Solo el repartidor puede registrar este pago" });
+  }
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  const repartidorId = pkg.repartidorId || pkg.repartidor_id;
+  if (String(repartidorId) !== String(req.authUser.id)) {
+    return res.status(403).json({ error: "Solo el repartidor asignado puede registrar el pago" });
+  }
+  if (pkg.quienPaga !== "destinatario") {
+    return res.status(400).json({ error: "Este paquete no es de pago por destinatario" });
+  }
+  if (pkg.pagado) {
+    return res.status(400).json({ error: "El paquete ya está pagado" });
+  }
+  if (pkg.pesoKg > 2 && (!pkg.precioEnvio || pkg.precioEnvio <= 0)) {
+    return res.status(400).json({ error: "El operador debe asignar el precio primero" });
+  }
+  if (!repo.markPackagePagado) {
+    return res.status(501).json({ error: "Pago no disponible" });
+  }
+  const { metodoPago } = req.body || {};
+  const updated = await call(repo.markPackagePagado, req.params.id, metodoPago || "efectivo");
+  res.json(updated);
+});
+
 app.get("/api/clients", async (req, res) => {
   res.json(await call(repo.listClients));
 });
 
 app.post("/api/clients", async (req, res) => {
-  const client = await call(repo.createClient, req.body);
+  const { tipo, nombre, documento, email, direccion } = req.body || {};
+  if (
+    !textValue(tipo) ||
+    !textValue(nombre) ||
+    !textValue(documento) ||
+    !textValue(email) ||
+    !textValue(direccion)
+  ) {
+    return res.status(400).json({
+      error:
+        "tipo, nombre, documento, telefonoPais, telefonoNumero, email y direccion son requeridos"
+    });
+  }
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
+  const client = await call(repo.createClient, {
+    tipo: textValue(tipo),
+    nombre: textValue(nombre),
+    documento: textValue(documento),
+    telefono: phone.e164,
+    email: textValue(email),
+    direccion: textValue(direccion)
+  });
   res.status(201).json(client);
 });
 
@@ -207,6 +487,9 @@ app.get("/api/packages/expanded", async (req, res) => {
   const { status } = req.query;
   if (req.authUser?.roleName === "Repartidor" && repo.listPackagesByCourier) {
     return res.json(await call(repo.listPackagesByCourier, req.authUser.id));
+  }
+  if (req.authUser?.roleName === "Cliente" && req.authUser?.clienteId && repo.listPackagesByClient) {
+    return res.json(await call(repo.listPackagesByClient, req.authUser.clienteId));
   }
   res.json(await call(repo.listPackagesDetailed, status));
 });
@@ -222,7 +505,90 @@ app.get("/api/packages/:id", async (req, res) => {
   ) {
     return res.status(403).json({ error: "No autorizado" });
   }
+  if (req.authUser?.roleName === "Cliente") {
+    const isRemitente = String(pkg.remitenteClienteId) === String(req.authUser.clienteId);
+    const isDestinatario = String(pkg.destinatarioId) === String(req.authUser.clienteId);
+    if (!isRemitente && !isDestinatario) {
+      return res.status(403).json({ error: "No autorizado" });
+    }
+  }
   res.json(pkg);
+});
+
+app.patch("/api/packages/:id/precio", async (req, res) => {
+  const roleName = req.authUser?.roleName;
+  if (roleName !== "Administrador" && roleName !== "Operador logístico") {
+    return res.status(403).json({ error: "Solo operador o admin pueden asignar precio" });
+  }
+  const { precioEnvio } = req.body || {};
+  const precio = parseFloat(precioEnvio);
+  if (Number.isNaN(precio) || precio < 0) {
+    return res.status(400).json({ error: "precioEnvio debe ser un número válido >= 0" });
+  }
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  if (!repo.updatePackagePrecio) {
+    return res.status(501).json({ error: "Actualización de precio no disponible" });
+  }
+  const updated = await call(repo.updatePackagePrecio, req.params.id, precio);
+  res.json(updated);
+});
+
+app.patch("/api/packages/:id/operador", async (req, res) => {
+  const roleName = req.authUser?.roleName;
+  if (roleName !== "Administrador" && roleName !== "Operador logístico") {
+    return res.status(403).json({ error: "Solo administrador o operador" });
+  }
+  const { operadorId } = req.body || {};
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  if (roleName === "Operador logístico") {
+    if (operadorId && String(operadorId) !== String(req.authUser.id)) {
+      return res.status(403).json({ error: "Solo puedes asignarte a ti mismo" });
+    }
+  }
+  if (operadorId) {
+    const operador = await call(repo.getUserById, operadorId);
+    if (!operador) return res.status(400).json({ error: "Operador inválido" });
+    const role = await call(repo.getRoleById, operador.rol_id || operador.rolId);
+    if (role?.nombre !== "Operador logístico") {
+      return res.status(400).json({ error: "El usuario debe ser operador logístico" });
+    }
+  }
+  if (!repo.updatePackageOperador) {
+    return res.status(501).json({ error: "No disponible" });
+  }
+  const updated = await call(repo.updatePackageOperador, req.params.id, operadorId || null);
+  res.json(updated);
+});
+
+app.patch("/api/packages/:id/repartidor", async (req, res) => {
+  const roleName = req.authUser?.roleName;
+  if (roleName !== "Administrador" && roleName !== "Operador logístico") {
+    return res.status(403).json({ error: "Solo administrador o operador pueden asignar repartidor" });
+  }
+  const { repartidorId } = req.body || {};
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  if (roleName === "Operador logístico") {
+    const currentOperadorId = pkg.operadorId || pkg.operador_id;
+    if (String(currentOperadorId) !== String(req.authUser.id)) {
+      return res.status(403).json({ error: "Solo puedes asignar repartidor a paquetes donde eres el operador" });
+    }
+  }
+  if (repartidorId) {
+    const repartidor = await call(repo.getUserById, repartidorId);
+    if (!repartidor) return res.status(400).json({ error: "Repartidor inválido" });
+    const role = await call(repo.getRoleById, repartidor.rol_id || repartidor.rolId);
+    if (role?.nombre !== "Repartidor") {
+      return res.status(400).json({ error: "El usuario debe ser repartidor" });
+    }
+  }
+  if (!repo.updatePackageRepartidor) {
+    return res.status(501).json({ error: "No disponible" });
+  }
+  const updated = await call(repo.updatePackageRepartidor, req.params.id, repartidorId || null);
+  res.json(updated);
 });
 
 app.post("/api/packages", async (req, res) => {
@@ -230,31 +596,62 @@ app.post("/api/packages", async (req, res) => {
     return res.status(403).json({ error: "No autorizado" });
   }
   const {
+    tipoEnvio,
     remitenteId,
+    remitenteClienteId,
     destinatarioId,
     sucursalOrigenId,
     destinoTexto,
+    descripcion,
     operadorId,
     repartidorId
   } = req.body;
-  if (!remitenteId || !destinatarioId || !sucursalOrigenId || !destinoTexto) {
-    return res.status(400).json({
-      error:
-        "remitenteId, destinatarioId, sucursalOrigenId y destinoTexto son requeridos"
-    });
-  }
-  const remitente = await call(repo.getDistributorById, remitenteId);
-  const destinatario = await call(repo.getClientById, destinatarioId);
-  if (!remitente || !destinatario) {
-    return res.status(400).json({ error: "Distribuidora o cliente inválido" });
-  }
-  const origen = await call(repo.getBranchById, sucursalOrigenId);
-  if (!origen) {
-    return res.status(400).json({ error: "Sucursal inválida" });
+  const shippingType = textValue(tipoEnvio || "distribuidora_cliente");
+  if (!["distribuidora_cliente", "cliente_cliente"].includes(shippingType)) {
+    return res.status(400).json({ error: "tipoEnvio invalido" });
   }
   let operadorFinal = operadorId || null;
   if (!operadorFinal && req.authUser?.roleName === "Operador logístico") {
     operadorFinal = req.authUser.id;
+  }
+  if (
+    !destinatarioId ||
+    !sucursalOrigenId ||
+    !textValue(destinoTexto) ||
+    !textValue(descripcion) ||
+    !operadorFinal ||
+    !repartidorId
+  ) {
+    return res.status(400).json({
+      error:
+        "destinatarioId, sucursalOrigenId, destinoTexto, descripcion, operadorId y repartidorId son requeridos"
+    });
+  }
+  if (shippingType === "distribuidora_cliente" && !remitenteId) {
+    return res.status(400).json({ error: "remitenteId es requerido" });
+  }
+  if (shippingType === "cliente_cliente" && !remitenteClienteId) {
+    return res.status(400).json({ error: "remitenteClienteId es requerido" });
+  }
+  const remitente =
+    shippingType === "cliente_cliente"
+      ? await call(repo.getClientById, remitenteClienteId)
+      : await call(repo.getDistributorById, remitenteId);
+  const destinatario = await call(repo.getClientById, destinatarioId);
+  if (!remitente || !destinatario) {
+    return res.status(400).json({ error: "Remitente o cliente invalido" });
+  }
+  if (
+    shippingType === "cliente_cliente" &&
+    String(remitenteClienteId) === String(destinatarioId)
+  ) {
+    return res.status(400).json({
+      error: "Remitente y destinatario no pueden ser el mismo cliente"
+    });
+  }
+  const origen = await call(repo.getBranchById, sucursalOrigenId);
+  if (!origen) {
+    return res.status(400).json({ error: "Sucursal inválida" });
   }
   if (operadorFinal) {
     const operador = await call(repo.getUserById, operadorFinal);
@@ -281,7 +678,13 @@ app.post("/api/packages", async (req, res) => {
   }
   const pkg = await call(repo.createPackage, {
     ...req.body,
-    operadorId: operadorFinal
+    tipoEnvio: shippingType,
+    remitenteId: shippingType === "distribuidora_cliente" ? remitenteId : null,
+    remitenteClienteId:
+      shippingType === "cliente_cliente" ? remitenteClienteId : null,
+    operadorId: operadorFinal,
+    destinoTexto: textValue(destinoTexto),
+    descripcion: textValue(descripcion)
   });
   res.status(201).json(pkg);
 });
@@ -310,12 +713,118 @@ app.patch("/api/packages/:id/status", async (req, res) => {
   res.json(pkg);
 });
 
+app.patch("/api/packages/:id/reprogramar", async (req, res) => {
+  const { id } = req.params;
+  const { fecha, horaInicio, horaFin, direccion } = req.body || {};
+  if (!fecha || !horaInicio || !horaFin) {
+    return res.status(400).json({
+      error: "fecha, horaInicio y horaFin son requeridos"
+    });
+  }
+  const existing = await call(repo.getPackageById, id);
+  if (!existing) {
+    return res.status(404).json({ error: "Paquete no encontrado" });
+  }
+  if (existing.estado_actual !== "Intento fallido" && existing.estadoActual !== "Intento fallido") {
+    return res.status(400).json({
+      error: "Solo se puede reprogramar un paquete con estado Intento fallido"
+    });
+  }
+  if (req.authUser?.roleName === "Repartidor") {
+    const repartidorId = existing.repartidor_id || existing.repartidorId;
+    if (repartidorId !== req.authUser.id) {
+      return res.status(403).json({ error: "No autorizado" });
+    }
+  }
+  if (!repo.updatePackageReprogramar) {
+    return res.status(501).json({ error: "Reprogramación no disponible" });
+  }
+  const pkg = await call(repo.updatePackageReprogramar, id, {
+    fecha,
+    horaInicio,
+    horaFin,
+    direccion: direccion || null
+  });
+  res.json(pkg);
+});
+
+app.post("/api/tracking/:code/reprogramar", async (req, res) => {
+  const { code } = req.params;
+  const { fecha, horaInicio, horaFin, direccion } = req.body || {};
+  if (!fecha || !horaInicio || !horaFin) {
+    return res.status(400).json({
+      error: "fecha, horaInicio y horaFin son requeridos"
+    });
+  }
+  const tracking = await call(repo.getTrackingByCode, code);
+  if (!tracking) {
+    return res.status(404).json({ error: "Código no encontrado" });
+  }
+  if (tracking.estadoActual !== "Intento fallido") {
+    return res.status(400).json({
+      error: "Solo se puede reprogramar un paquete con estado Intento fallido"
+    });
+  }
+  if (!repo.updatePackageReprogramar) {
+    return res.status(501).json({ error: "Reprogramación no disponible" });
+  }
+  const pkg = await call(repo.updatePackageReprogramar, tracking.id, {
+    fecha,
+    horaInicio,
+    horaFin,
+    direccion: direccion || null
+  });
+  const updated = await call(repo.getTrackingByCode, code);
+  res.json(updated);
+});
+
 app.get("/api/tracking/:code", async (req, res) => {
   const tracking = await call(repo.getTrackingByCode, req.params.code);
   if (!tracking) {
     return res.status(404).json({ error: "Código no encontrado" });
   }
   res.json(tracking);
+});
+
+app.get("/api/dni/:dni", async (req, res) => {
+  const dni = textValue(req.params.dni).replace(/\D/g, "");
+  if (!/^\d{8}$/.test(dni)) {
+    return res.status(400).json({ error: "DNI invalido. Debe tener 8 digitos" });
+  }
+  if (!dniApiToken) {
+    return res.status(503).json({
+      error:
+        "Consulta DNI no configurada. Define DNI_API_TOKEN en backend/.env"
+    });
+  }
+  try {
+    const response = await fetch(
+      `${dniApiUrl}?numero=${encodeURIComponent(dni)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${dniApiToken}`,
+          Accept: "application/json"
+        }
+      }
+    );
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      return res.status(502).json({
+        error: data?.message || data?.error || "No se pudo consultar el DNI"
+      });
+    }
+    const normalized = normalizeDniData(data, dni);
+    if (!normalized.nombreCompleto) {
+      return res
+        .status(404)
+        .json({ error: "No se encontraron datos para el DNI consultado" });
+    }
+    return res.json(normalized);
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ error: err.message || "Error consultando API de DNI" });
+  }
 });
 
 app.get("/api/operators/phone", async (req, res) => {
@@ -366,16 +875,27 @@ app.get("/api/users/:id", requireAdmin, async (req, res) => {
     telefono: user.telefono || "",
     rolId: user.rol_id || user.rolId || null,
     sucursalId: user.sucursal_id || user.sucursalId || null,
-    activo: user.activo
+    activo: user.activo,
+    placa: user.placa || null,
+    vehiculo: user.vehiculo || null
   });
 });
 
 app.post("/api/users", requireAdmin, async (req, res) => {
-  const { nombre, email, telefono, rolId, sucursalId, password } = req.body;
-  if (!nombre || !email || !password) {
+  const { nombre, email, rolId, sucursalId, password } = req.body || {};
+  if (
+    !textValue(nombre) ||
+    !textValue(email) ||
+    !textValue(password) ||
+    !rolId ||
+    !sucursalId
+  ) {
     return res
       .status(400)
-      .json({ error: "nombre, email y contraseña son requeridos" });
+      .json({
+        error:
+          "nombre, email, telefonoPais, telefonoNumero, contraseña, rolId y sucursalId son requeridos"
+      });
   }
   if (rolId && !(await call(repo.getRoleById, rolId))) {
     return res.status(400).json({ error: "Rol inválido" });
@@ -383,10 +903,14 @@ app.post("/api/users", requireAdmin, async (req, res) => {
   if (sucursalId && !(await call(repo.getBranchById, sucursalId))) {
     return res.status(400).json({ error: "Sucursal inválida" });
   }
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await call(repo.createUser, {
     ...req.body,
-    telefono,
+    nombre: textValue(nombre),
+    email: textValue(email),
+    telefono: phone.e164,
     passwordHash
   });
   res.status(201).json(user);
@@ -394,7 +918,7 @@ app.post("/api/users", requireAdmin, async (req, res) => {
 
 app.put("/api/users/:id", requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { nombre, email, telefono, rolId, sucursalId, activo, password } =
+  const { nombre, email, rolId, sucursalId, activo, password } =
     req.body;
   const existing = await call(repo.getUserById, id);
   if (!existing) {
@@ -406,15 +930,26 @@ app.put("/api/users/:id", requireAdmin, async (req, res) => {
   if (sucursalId && !(await call(repo.getBranchById, sucursalId))) {
     return res.status(400).json({ error: "Sucursal inválida" });
   }
+  if (!textValue(nombre) || !textValue(email) || !rolId || !sucursalId) {
+    return res.status(400).json({
+      error:
+        "nombre, email, telefonoPais, telefonoNumero, rolId y sucursalId son requeridos"
+    });
+  }
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
   const passwordHash = password ? await bcrypt.hash(password, 10) : null;
+  const { placa, vehiculo } = req.body || {};
   const updated = await call(repo.updateUser, id, {
-    nombre,
-    email,
-    telefono,
+    nombre: textValue(nombre),
+    email: textValue(email),
+    telefono: phone.e164,
     rolId,
     sucursalId,
     activo,
-    passwordHash
+    passwordHash,
+    placa: placa !== undefined ? (placa || null) : undefined,
+    vehiculo: vehiculo !== undefined ? (vehiculo || null) : undefined
   });
   if (!updated) {
     return res.status(400).json({ error: "No se pudo actualizar" });
@@ -440,10 +975,13 @@ app.get("/api/branches", async (req, res) => {
 
 app.post("/api/branches", async (req, res) => {
   const { nombre, direccion } = req.body;
-  if (!nombre || !direccion) {
+  if (!textValue(nombre) || !textValue(direccion)) {
     return res.status(400).json({ error: "nombre y direccion son requeridos" });
   }
-  const branch = await call(repo.createBranch, req.body);
+  const branch = await call(repo.createBranch, {
+    nombre: textValue(nombre),
+    direccion: textValue(direccion)
+  });
   res.status(201).json(branch);
 });
 
@@ -456,11 +994,21 @@ app.get("/api/distributors", async (req, res) => {
 });
 
 app.post("/api/distributors", async (req, res) => {
-  const { nombre } = req.body;
-  if (!nombre) {
-    return res.status(400).json({ error: "nombre es requerido" });
+  const { nombre, razonSocial, direccion } = req.body || {};
+  if (!textValue(nombre) || !textValue(razonSocial) || !textValue(direccion)) {
+    return res.status(400).json({
+      error:
+        "nombre, razonSocial, telefonoPais, telefonoNumero y direccion son requeridos"
+    });
   }
-  const distributor = await call(repo.createDistributor, req.body);
+  const phone = resolvePhone(req.body || {});
+  if (!phone.ok) return res.status(400).json({ error: phone.error });
+  const distributor = await call(repo.createDistributor, {
+    nombre: textValue(nombre),
+    razonSocial: textValue(razonSocial),
+    telefono: phone.e164,
+    direccion: textValue(direccion)
+  });
   res.status(201).json(distributor);
 });
 
@@ -482,6 +1030,8 @@ app.get("/api/reports/packages", async (req, res) => {
   const headers = [
     "ID",
     "Codigo",
+    "Tipo Envio",
+    "Tipo Remitente",
     "Estado",
     "Descripcion",
     "Destino",
@@ -501,6 +1051,10 @@ app.get("/api/reports/packages", async (req, res) => {
     "Creado En",
     "Ultima Actualizacion",
     "Ultima Observacion",
+    "Reprogramacion Fecha",
+    "Reprogramacion Hora Inicio",
+    "Reprogramacion Hora Fin",
+    "Reprogramacion Direccion",
     "Historial Estados"
   ];
   const rows = packagesWithHistory.map((pkg) => {
@@ -517,6 +1071,8 @@ app.get("/api/reports/packages", async (req, res) => {
     return [
       pkg.id,
       pkg.codigoSeguimiento,
+      pkg.tipoEnvio || "",
+      pkg.remitenteTipo || "",
       pkg.estadoActual,
       pkg.descripcion,
       pkg.destinoTexto,
@@ -536,6 +1092,10 @@ app.get("/api/reports/packages", async (req, res) => {
       formatDate(pkg.creadoEn),
       formatDate(lastEntry?.fechaHora),
       lastEntry?.observacion || "",
+      pkg.reprogramacionFecha || "",
+      pkg.reprogramacionHoraInicio || "",
+      pkg.reprogramacionHoraFin || "",
+      pkg.reprogramacionDireccion || "",
       historyText
     ];
   });
@@ -570,7 +1130,15 @@ app.get("/api/reports/packages", async (req, res) => {
   res.send(`\uFEFF${csv}`);
 });
 
-app.listen(port, () => {
-  console.log(`API logística en http://localhost:${port}`);
-  ensureAdminUser();
-});
+const startServer = () => {
+  app.listen(port, () => {
+    console.log(`API logística en http://localhost:${port}`);
+    ensureAdminUser();
+  });
+};
+
+if (process.env.NODE_ENV !== "test") {
+  startServer();
+}
+
+export { app, startServer };

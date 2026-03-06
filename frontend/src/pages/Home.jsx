@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 const Home = () => {
   const [code, setCode] = useState("");
@@ -50,7 +50,15 @@ const Home = () => {
           </form>
         </div>
 
-        <div className="mt-10 text-center text-xs text-slate-400">
+        <div className="mt-10 flex flex-wrap justify-center gap-4 text-sm">
+          <Link to="/cliente/login" className="font-semibold text-slate-600 hover:text-brand-600">
+            Iniciar sesión
+          </Link>
+          <Link to="/cliente/registro" className="font-semibold text-brand-600 hover:text-brand-700">
+            Registrarse para enviar
+          </Link>
+        </div>
+        <div className="mt-6 text-center text-xs text-slate-400">
           LogiMed Tingo María © 2026
           <span className="block mt-1">Distribución segura de medicamentos</span>
         </div>

@@ -33,7 +33,11 @@ const AdminLogin = () => {
           roleName: "Administrador"
         }
       );
-      navigate("/admin");
+      if (data.user?.roleName === "Cliente") {
+        navigate("/cliente");
+      } else {
+        navigate("/admin");
+      }
     } catch (err) {
       setError(err.message || "No se pudo iniciar sesión.");
     } finally {

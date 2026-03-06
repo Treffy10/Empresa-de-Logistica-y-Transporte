@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  createClient,
   createPackage,
+  getDniData,
   getUser,
   listBranches,
   listClients,
@@ -9,15 +11,33 @@ import {
   listOperators,
   listCouriers
 } from "../services/api.js";
+import PhoneField from "../components/PhoneField.jsx";
+import {
+  buildPhoneValue,
+  DEFAULT_PHONE_COUNTRY,
+  onlyDigits
+} from "../utils/phone.js";
 
 const emptyForm = {
+  tipoEnvio: "distribuidora_cliente",
   remitenteId: "",
+  remitenteClienteId: "",
   destinatarioId: "",
   operadorId: "",
   repartidorId: "",
   sucursalOrigenId: "",
   destinoTexto: "",
   descripcion: ""
+};
+
+const emptyClientForm = {
+  tipo: "persona",
+  nombre: "",
+  documento: "",
+  telefonoPais: DEFAULT_PHONE_COUNTRY,
+  telefonoNumero: "",
+  email: "",
+  direccion: ""
 };
 
 const AdminPackageNew = () => {
@@ -31,34 +51,45 @@ const AdminPackageNew = () => {
   const [branches, setBranches] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const [clientModalOpen, setClientModalOpen] = useState(false);
+  const [clientModalTarget, setClientModalTarget] = useState("destinatarioId");
+  const [clientForm, setClientForm] = useState(emptyClientForm);
+  const [clientError, setClientError] = useState("");
+  const [clientLoading, setClientLoading] = useState(false);
+  const [clientDniLoading, setClientDniLoading] = useState(false);
+  const [clientDniError, setClientDniError] = useState("");
+  const lastClientDniRef = useRef("");
+
+  const loadData = async () => {
+    try {
+      const [
+        clientsData,
+        branchesData,
+        distributorsData,
+        operatorsData,
+        couriersData
+      ] = await Promise.all([
+        listClients(),
+        listBranches(),
+        listDistributors(),
+        listOperators(),
+        listCouriers()
+      ]);
+      setClients(clientsData);
+      setBranches(branchesData);
+      setDistributors(distributorsData);
+      setOperators(operatorsData);
+      setCouriers(couriersData);
+    } catch (err) {
+      setError(err.message || "No se pudieron cargar los datos.");
+    }
+  };
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const [
-          clientsData,
-          branchesData,
-          distributorsData,
-          operatorsData,
-          couriersData
-        ] = await Promise.all([
-          listClients(),
-          listBranches(),
-          listDistributors(),
-          listOperators(),
-          listCouriers()
-        ]);
-        setClients(clientsData);
-        setBranches(branchesData);
-        setDistributors(distributorsData);
-        setOperators(operatorsData);
-        setCouriers(couriersData);
-      } catch (err) {
-        setError(err.message || "No se pudieron cargar los datos.");
-      }
-    };
-    load();
+    loadData();
   }, []);
 
   useEffect(() => {
@@ -72,7 +103,21 @@ const AdminPackageNew = () => {
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+    setFieldErrors((prev) => ({ ...prev, [name]: "" }));
+    setForm((prev) => {
+      const next = { ...prev, [name]: value };
+      if (name === "tipoEnvio") {
+        next.remitenteId = "";
+        next.remitenteClienteId = "";
+      }
+      if (name === "destinatarioId" && value) {
+        const client = clients.find((c) => String(c.id) === String(value));
+        if (client?.direccion) {
+          next.destinoTexto = client.direccion;
+        }
+      }
+      return next;
+    });
   };
 
   const handleCancel = () => {
@@ -83,28 +128,200 @@ const AdminPackageNew = () => {
     navigate("/admin/sucursales/nuevo");
   };
 
+  const openClientModal = (targetField) => {
+    setClientModalTarget(targetField);
+    setClientForm(emptyClientForm);
+    setClientError("");
+    setClientModalOpen(true);
+  };
+
+  const closeClientModal = () => {
+    setClientModalOpen(false);
+    setClientError("");
+    setClientDniError("");
+  };
+
+  const handleClientFieldChange = (event) => {
+    const { name, value } = event.target;
+    setClientForm((prev) => ({
+      ...prev,
+      [name]:
+        name === "telefonoNumero" || name === "documento" ? onlyDigits(value) : value
+    }));
+    if (name === "documento") {
+      setClientDniError("");
+      if (onlyDigits(value).length < 8) {
+        lastClientDniRef.current = "";
+      }
+    }
+    if (name === "tipo") {
+      setClientDniError("");
+      lastClientDniRef.current = "";
+    }
+  };
+
+  const handleClientDocumentoKeyDown = (event) => {
+    if (clientForm.tipo !== "persona") return;
+    const allowed = [
+      "Backspace",
+      "Delete",
+      "ArrowLeft",
+      "ArrowRight",
+      "Tab",
+      "Home",
+      "End"
+    ];
+    if (allowed.includes(event.key)) return;
+    if (!/^\d$/.test(event.key)) event.preventDefault();
+  };
+
+  useEffect(() => {
+    if (!clientModalOpen || clientForm.tipo !== "persona") return;
+    const dni = onlyDigits(clientForm.documento);
+    if (dni.length !== 8 || dni === lastClientDniRef.current) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setClientDniLoading(true);
+      setClientDniError("");
+      try {
+        const result = await getDniData(dni);
+        if (cancelled) return;
+        const fullName =
+          String(result.nombreCompleto || "").trim() ||
+          [
+            String(result.nombres || "").trim(),
+            String(result.apellidoPaterno || "").trim(),
+            String(result.apellidoMaterno || "").trim()
+          ]
+            .filter(Boolean)
+            .join(" ");
+        if (fullName) {
+          setClientForm((prev) => ({
+            ...prev,
+            documento: dni,
+            nombre: fullName
+          }));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setClientDniError(
+            err.message || "No se pudo consultar DNI. Completa manualmente."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          lastClientDniRef.current = dni;
+          setClientDniLoading(false);
+        }
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [clientForm.documento, clientForm.tipo, clientModalOpen]);
+
+  const handleCreateClientInline = async (event) => {
+    event.preventDefault();
+    setClientError("");
+    if (
+      !clientForm.tipo ||
+      !clientForm.nombre.trim() ||
+      !clientForm.documento.trim() ||
+      !clientForm.email.trim() ||
+      !clientForm.direccion.trim()
+    ) {
+      setClientError("Completa todos los campos del cliente.");
+      return;
+    }
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientForm.email.trim());
+    if (!emailOk) {
+      setClientError("Ingresa un email valido.");
+      return;
+    }
+    const phone = buildPhoneValue(clientForm.telefonoPais, clientForm.telefonoNumero);
+    if (!phone.ok) {
+      setClientError(phone.error);
+      return;
+    }
+    setClientLoading(true);
+    try {
+      const created = await createClient({
+        tipo: clientForm.tipo,
+        nombre: clientForm.nombre.trim(),
+        documento: clientForm.documento.trim(),
+        telefonoPais: clientForm.telefonoPais,
+        telefonoNumero: phone.local,
+        telefono: phone.e164,
+        email: clientForm.email.trim(),
+        direccion: clientForm.direccion.trim()
+      });
+      await loadData();
+      setForm((prev) => {
+        const next = { ...prev, [clientModalTarget]: created.id };
+        if (clientModalTarget === "destinatarioId" && created.direccion) {
+          next.destinoTexto = created.direccion;
+        }
+        return next;
+      });
+      closeClientModal();
+      setSuccess("Cliente creado con exito y asignado al paquete.");
+    } catch (err) {
+      setClientError(err.message || "No se pudo crear el cliente.");
+    } finally {
+      setClientLoading(false);
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
+    setSuccess("");
+    const nextErrors = {};
+    const operadorFinal =
+      form.operadorId || (user?.roleName === "Operador logístico" ? user.id : "");
+    const isClientToClient = form.tipoEnvio === "cliente_cliente";
+    if (!isClientToClient && !form.remitenteId) {
+      nextErrors.remitenteId = "Selecciona una distribuidora.";
+    }
+    if (isClientToClient && !form.remitenteClienteId) {
+      nextErrors.remitenteClienteId = "Selecciona un cliente remitente.";
+    }
     if (
-      !form.remitenteId ||
-      !form.destinatarioId ||
-      !form.sucursalOrigenId ||
-      !form.destinoTexto
+      isClientToClient &&
+      form.remitenteClienteId &&
+      String(form.remitenteClienteId) === String(form.destinatarioId)
     ) {
-      setError("Completa todos los campos obligatorios.");
+      nextErrors.destinatarioId =
+        "El destinatario debe ser diferente al cliente remitente.";
+    }
+    if (!form.destinatarioId) nextErrors.destinatarioId = "Selecciona un cliente.";
+    if (!operadorFinal) nextErrors.operadorId = "Selecciona un operador.";
+    if (!form.repartidorId) nextErrors.repartidorId = "Selecciona un repartidor.";
+    if (!form.sucursalOrigenId) nextErrors.sucursalOrigenId = "Selecciona una sucursal.";
+    if (!form.destinoTexto.trim()) nextErrors.destinoTexto = "Ingresa el destino.";
+    if (!form.descripcion.trim()) nextErrors.descripcion = "Ingresa la descripcion.";
+    setFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      setError("Revisa los campos marcados.");
       return;
     }
     setLoading(true);
     try {
       const payload = {
         ...form,
-        operadorId:
-          form.operadorId ||
-          (user?.roleName === "Operador logístico" ? user.id : "")
+        tipoEnvio: form.tipoEnvio,
+        remitenteId: isClientToClient ? "" : form.remitenteId,
+        remitenteClienteId: isClientToClient ? form.remitenteClienteId : "",
+        operadorId: operadorFinal,
+        destinoTexto: form.destinoTexto.trim(),
+        descripcion: form.descripcion.trim()
       };
       const created = await createPackage(payload);
-      navigate(`/admin/paquetes/${created.id}`);
+      setSuccess("Paquete creado con exito.");
+      setTimeout(() => {
+        navigate(`/admin/paquetes/${created.id}`);
+      }, 900);
     } catch (err) {
       setError(err.message || "No se pudo registrar el paquete.");
     } finally {
@@ -139,53 +356,126 @@ const AdminPackageNew = () => {
               Datos de origen (distribuidora)
             </div>
             <label className="mt-4 block text-sm text-slate-600">
-              Distribuidora *
+              Tipo de envio *
               <select
-                name="remitenteId"
-                value={form.remitenteId}
+                name="tipoEnvio"
+                value={form.tipoEnvio}
                 onChange={handleChange}
                 className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                required
               >
-                <option value="">Seleccionar distribuidora</option>
-                {distributors.map((distributor) => (
-                  <option key={distributor.id} value={distributor.id}>
-                    {distributor.nombre}
-                  </option>
-                ))}
+                <option value="distribuidora_cliente">
+                  Distribuidora a Cliente
+                </option>
+                <option value="cliente_cliente">Cliente a Cliente</option>
               </select>
             </label>
+            {form.tipoEnvio === "distribuidora_cliente" ? (
+              <label className="mt-4 block text-sm text-slate-600">
+                Distribuidora remitente *
+                <select
+                  name="remitenteId"
+                  value={form.remitenteId}
+                  onChange={handleChange}
+                  className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                    fieldErrors.remitenteId ? "border-red-300" : "border-slate-200"
+                  }`}
+                  required
+                >
+                  <option value="">Seleccionar distribuidora</option>
+                  {distributors.map((distributor) => (
+                    <option key={distributor.id} value={distributor.id}>
+                      {distributor.nombre}
+                    </option>
+                  ))}
+                </select>
+                {fieldErrors.remitenteId && (
+                  <span className="mt-1 block text-xs text-red-600">
+                    {fieldErrors.remitenteId}
+                  </span>
+                )}
+              </label>
+            ) : (
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-sm text-slate-600">
+                  <span>Cliente remitente *</span>
+                  <button
+                    type="button"
+                    onClick={() => openClientModal("remitenteClienteId")}
+                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-brand-700"
+                  >
+                    + Nuevo cliente
+                  </button>
+                </div>
+                <select
+                  name="remitenteClienteId"
+                  value={form.remitenteClienteId}
+                  onChange={handleChange}
+                  className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                    fieldErrors.remitenteClienteId
+                      ? "border-red-300"
+                      : "border-slate-200"
+                  }`}
+                  required
+                >
+                  <option value="">Seleccionar cliente remitente</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.nombre}
+                    </option>
+                  ))}
+                </select>
+                {fieldErrors.remitenteClienteId && (
+                  <span className="mt-1 block text-xs text-red-600">
+                    {fieldErrors.remitenteClienteId}
+                  </span>
+                )}
+              </div>
+            )}
             <label className="mt-4 block text-sm text-slate-600">
-              Operador asignado
+              Operador asignado *
               <select
                 name="operadorId"
                 value={form.operadorId}
                 onChange={handleChange}
-                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                  fieldErrors.operadorId ? "border-red-300" : "border-slate-200"
+                }`}
                 disabled={user?.roleName === "Operador logístico"}
+                required
               >
-                <option value="">Sin asignar</option>
+                <option value="">Seleccionar operador</option>
                 {operators.map((operator) => (
                   <option key={operator.id} value={operator.id}>
                     {operator.nombre}
                   </option>
                 ))}
               </select>
+              {fieldErrors.operadorId && (
+                <span className="mt-1 block text-xs text-red-600">{fieldErrors.operadorId}</span>
+              )}
             </label>
             <label className="mt-4 block text-sm text-slate-600">
-              Repartidor asignado
+              Repartidor asignado *
               <select
                 name="repartidorId"
                 value={form.repartidorId}
                 onChange={handleChange}
-                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                  fieldErrors.repartidorId ? "border-red-300" : "border-slate-200"
+                }`}
+                required
               >
-                <option value="">Sin asignar</option>
+                <option value="">Seleccionar repartidor</option>
                 {couriers.map((courier) => (
                   <option key={courier.id} value={courier.id}>
                     {courier.nombre}
                   </option>
                 ))}
               </select>
+              {fieldErrors.repartidorId && (
+                <span className="mt-1 block text-xs text-red-600">{fieldErrors.repartidorId}</span>
+              )}
             </label>
           </div>
 
@@ -196,15 +486,27 @@ const AdminPackageNew = () => {
                   <path d="M12 2a7 7 0 0 0-4 12.7V22l4-3 4 3v-7.3A7 7 0 0 0 12 2z" />
                 </svg>
               </span>
-              Datos del cliente
+              Datos del destinatario
             </div>
-            <label className="mt-4 block text-sm text-slate-600">
-              Cliente de destino *
+            <div className="mt-4">
+              <div className="flex items-center justify-between text-sm text-slate-600">
+                <span>Cliente destinatario *</span>
+                <button
+                  type="button"
+                  onClick={() => openClientModal("destinatarioId")}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-brand-700"
+                >
+                  + Nuevo cliente
+                </button>
+              </div>
               <select
                 name="destinatarioId"
                 value={form.destinatarioId}
                 onChange={handleChange}
-                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                  fieldErrors.destinatarioId ? "border-red-300" : "border-slate-200"
+                }`}
+                required
               >
                 <option value="">Seleccionar cliente</option>
                 {clients.map((client) => (
@@ -213,7 +515,10 @@ const AdminPackageNew = () => {
                   </option>
                 ))}
               </select>
-            </label>
+              {fieldErrors.destinatarioId && (
+                <span className="mt-1 block text-xs text-red-600">{fieldErrors.destinatarioId}</span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -234,7 +539,10 @@ const AdminPackageNew = () => {
                 name="sucursalOrigenId"
                 value={form.sucursalOrigenId}
                 onChange={handleChange}
-                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                  fieldErrors.sucursalOrigenId ? "border-red-300" : "border-slate-200"
+                }`}
+                required
               >
                 <option value="">Seleccionar sucursal</option>
                 {branches.map((branch) => (
@@ -243,6 +551,9 @@ const AdminPackageNew = () => {
                   </option>
                 ))}
               </select>
+              {fieldErrors.sucursalOrigenId && (
+                <span className="mt-1 block text-xs text-red-600">{fieldErrors.sucursalOrigenId}</span>
+              )}
               {branches.length === 0 && isAdmin && (
                 <button
                   type="button"
@@ -259,19 +570,31 @@ const AdminPackageNew = () => {
                 name="destinoTexto"
                 value={form.destinoTexto}
                 onChange={handleChange}
-                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                  fieldErrors.destinoTexto ? "border-red-300" : "border-slate-200"
+                }`}
                 placeholder="Ej: Jr. Callao 456, Tingo María"
+                required
               />
+              {fieldErrors.destinoTexto && (
+                <span className="mt-1 block text-xs text-red-600">{fieldErrors.destinoTexto}</span>
+              )}
             </label>
             <label className="text-sm text-slate-600 md:col-span-2">
-              Descripción del contenido
+              Descripcion del contenido *
               <input
                 name="descripcion"
                 value={form.descripcion}
                 onChange={handleChange}
-                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                  fieldErrors.descripcion ? "border-red-300" : "border-slate-200"
+                }`}
                 placeholder="Ej: Medicamentos varios, Antibióticos..."
+                required
               />
+              {fieldErrors.descripcion && (
+                <span className="mt-1 block text-xs text-red-600">{fieldErrors.descripcion}</span>
+              )}
             </label>
           </div>
         </div>
@@ -297,6 +620,118 @@ const AdminPackageNew = () => {
       {error && (
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+      {success && (
+        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {success}
+        </div>
+      )}
+      {clientModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">Nuevo cliente</h3>
+              <button
+                type="button"
+                onClick={closeClientModal}
+                className="rounded-full border border-slate-200 px-3 py-1 text-sm text-slate-600"
+              >
+                Cerrar
+              </button>
+            </div>
+            <form onSubmit={handleCreateClientInline} className="grid gap-4 md:grid-cols-2">
+              <label className="text-sm text-slate-600">
+                Tipo *
+                <select
+                  name="tipo"
+                  value={clientForm.tipo}
+                  onChange={handleClientFieldChange}
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                  required
+                >
+                  <option value="persona">Persona</option>
+                  <option value="empresa">Empresa</option>
+                </select>
+              </label>
+              <label className="text-sm text-slate-600">
+                {clientForm.tipo === "persona" ? "Nombre completo *" : "Razon social *"}
+                <input
+                  name="nombre"
+                  value={clientForm.nombre}
+                  onChange={handleClientFieldChange}
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                  placeholder={
+                    clientForm.tipo === "persona"
+                      ? "Nombre completo"
+                      : "Razon social de la empresa"
+                  }
+                  required
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                {clientForm.tipo === "persona" ? "DNI *" : "RUC *"}
+                <input
+                  name="documento"
+                  value={clientForm.documento}
+                  onChange={handleClientFieldChange}
+                  onKeyDown={handleClientDocumentoKeyDown}
+                  inputMode={clientForm.tipo === "persona" ? "numeric" : "text"}
+                  maxLength={clientForm.tipo === "persona" ? 8 : 20}
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                  placeholder={
+                    clientForm.tipo === "persona" ? "DNI (8 digitos)" : "RUC (11 digitos)"
+                  }
+                  required
+                />
+                {clientDniLoading && clientForm.tipo === "persona" && (
+                  <span className="mt-1 block text-xs text-brand-700">
+                    Consultando DNI...
+                  </span>
+                )}
+                {clientDniError && clientForm.tipo === "persona" && (
+                  <span className="mt-1 block text-xs text-amber-700">
+                    {clientDniError}
+                  </span>
+                )}
+              </label>
+              <PhoneField
+                countryValue={clientForm.telefonoPais}
+                numberValue={clientForm.telefonoNumero}
+                onChange={handleClientFieldChange}
+              />
+              <label className="text-sm text-slate-600">
+                Email *
+                <input
+                  name="email"
+                  value={clientForm.email}
+                  onChange={handleClientFieldChange}
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                  required
+                />
+              </label>
+              <label className="text-sm text-slate-600">
+                Direccion *
+                <input
+                  name="direccion"
+                  value={clientForm.direccion}
+                  onChange={handleClientFieldChange}
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                  required
+                />
+              </label>
+              <div className="md:col-span-2 flex items-center justify-between">
+                <div className="text-sm text-red-600">{clientError}</div>
+                <button
+                  type="submit"
+                  disabled={clientLoading}
+                  className="rounded-full bg-brand-600 px-6 py-3 text-sm font-semibold text-white"
+                >
+                  {clientLoading ? "Guardando..." : "Guardar cliente"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

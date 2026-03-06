@@ -5,7 +5,8 @@ const now = () => new Date().toISOString();
 const roles = [
   { id: "r1", nombre: "Administrador" },
   { id: "r2", nombre: "Operador logístico" },
-  { id: "r3", nombre: "Repartidor" }
+  { id: "r3", nombre: "Repartidor" },
+  { id: "r4", nombre: "Cliente" }
 ];
 
 const statuses = ["En Almacén", "En Tránsito", "Entregado", "Intento fallido"];
@@ -87,7 +88,10 @@ const users = [
 ];
 
 const buildTracking = (pkg) => {
-  const remitente = distributors.find((d) => d.id === pkg.remitenteId);
+  const remitente =
+    pkg.tipoEnvio === "cliente_cliente"
+      ? clients.find((c) => c.id === pkg.remitenteClienteId)
+      : distributors.find((d) => d.id === pkg.remitenteId);
   const destinatario = clients.find((c) => c.id === pkg.destinatarioId);
   const operador = users.find((u) => u.id === pkg.operadorId);
   const repartidor = users.find((u) => u.id === pkg.repartidorId);
@@ -95,23 +99,38 @@ const buildTracking = (pkg) => {
   const destino = branches.find((b) => b.id === pkg.sucursalDestinoId);
 
   return {
+    id: pkg.id,
     codigoSeguimiento: pkg.codigoSeguimiento,
     estadoActual: pkg.estadoActual,
     descripcion: pkg.descripcion,
     destinoTexto: pkg.destinoTexto || "",
+    tipoEnvio: pkg.tipoEnvio || "distribuidora_cliente",
+    remitenteTipo:
+      pkg.tipoEnvio === "cliente_cliente" ? "Cliente" : "Distribuidora",
     remitente,
     destinatario,
     operador,
     repartidor,
     sucursalOrigen: origen,
     sucursalDestino: destino,
+    reprogramacionFecha: pkg.reprogramacionFecha,
+    reprogramacionHoraInicio: pkg.reprogramacionHoraInicio,
+    reprogramacionHoraFin: pkg.reprogramacionHoraFin,
+    reprogramacionDireccion: pkg.reprogramacionDireccion,
     historial: pkg.historial
   };
 };
 
 const buildPackageDetails = (pkg) => ({
   ...pkg,
-  remitente: distributors.find((d) => d.id === pkg.remitenteId) || null,
+  tipoEnvio: pkg.tipoEnvio || "distribuidora_cliente",
+  remitenteClienteId: pkg.remitenteClienteId || null,
+  remitenteTipo:
+    pkg.tipoEnvio === "cliente_cliente" ? "Cliente" : "Distribuidora",
+  remitente:
+    (pkg.tipoEnvio === "cliente_cliente"
+      ? clients.find((c) => c.id === pkg.remitenteClienteId)
+      : distributors.find((d) => d.id === pkg.remitenteId)) || null,
   destinatario: clients.find((c) => c.id === pkg.destinatarioId) || null,
   operador: users.find((u) => u.id === pkg.operadorId) || null,
   repartidor: users.find((u) => u.id === pkg.repartidorId) || null,
@@ -153,6 +172,15 @@ export const listPackagesByCourier = (courierId) =>
     .filter((pkg) => pkg.repartidorId === courierId)
     .map(buildPackageDetails);
 
+export const listPackagesByClient = (clienteId) =>
+  packages
+    .filter(
+      (pkg) =>
+        String(pkg.remitenteClienteId) === String(clienteId) ||
+        String(pkg.destinatarioId) === String(clienteId)
+    )
+    .map(buildPackageDetails);
+
 const generateTrackingCode = () =>
   `TM-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`;
 
@@ -164,7 +192,9 @@ export const createPackage = (data) => {
   const pkg = {
     id: uuid(),
     codigoSeguimiento: code,
-    remitenteId: data.remitenteId,
+    tipoEnvio: data.tipoEnvio || "distribuidora_cliente",
+    remitenteId: data.remitenteId || null,
+    remitenteClienteId: data.remitenteClienteId || null,
     destinatarioId: data.destinatarioId,
     operadorId: data.operadorId || null,
     repartidorId: data.repartidorId || null,
@@ -173,6 +203,10 @@ export const createPackage = (data) => {
     destinoTexto: data.destinoTexto || "",
     descripcion: data.descripcion || "",
     estadoActual: "En Almacén",
+    pesoKg: data.pesoKg ?? 0,
+    precioEnvio: data.precioEnvio ?? 10,
+    quienPaga: data.quienPaga || "remitente",
+    pagado: data.pagado ?? false,
     creadoEn: now(),
     historial: [{ estado: "En Almacén", fechaHora: now() }]
   };
@@ -185,6 +219,21 @@ export const updatePackageStatus = (id, estado, observacion = "") => {
   if (!pkg) return null;
   pkg.estadoActual = estado;
   pkg.historial.push({ estado, fechaHora: now(), observacion });
+  return pkg;
+};
+
+export const updatePackageReprogramar = (id, { fecha, horaInicio, horaFin, direccion }) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.reprogramacionFecha = fecha;
+  pkg.reprogramacionHoraInicio = horaInicio;
+  pkg.reprogramacionHoraFin = horaFin;
+  pkg.reprogramacionDireccion = direccion || null;
+  if (direccion && String(direccion).trim()) {
+    pkg.destinoTexto = direccion.trim();
+  }
+  pkg.estadoActual = "En Tránsito";
+  pkg.historial.push({ estado: "En Tránsito", fechaHora: now(), observacion: "Reprogramado para entrega" });
   return pkg;
 };
 
@@ -246,8 +295,11 @@ export const createUser = (data) => {
     telefono: data.telefono || "",
     rolId: data.rolId || roles[0].id,
     sucursalId: data.sucursalId || branches[0].id,
+    clienteId: data.clienteId || null,
     activo: data.activo ?? true,
     passwordHash: data.passwordHash || "",
+    placa: data.placa || null,
+    vehiculo: data.vehiculo || null,
     creadoEn: now()
   };
   users.push(user);
@@ -267,7 +319,9 @@ export const updateUser = (id, data) => {
     rolId: data.rolId ?? existing.rolId,
     sucursalId: data.sucursalId ?? existing.sucursalId,
     activo: data.activo ?? existing.activo,
-    passwordHash: data.passwordHash || existing.passwordHash
+    passwordHash: data.passwordHash || existing.passwordHash,
+    placa: data.placa !== undefined ? data.placa : existing.placa,
+    vehiculo: data.vehiculo !== undefined ? data.vehiculo : existing.vehiculo
   };
   users[index] = updated;
   const { passwordHash, ...safeUser } = updated;
@@ -324,8 +378,57 @@ export const getDistributorById = (id) =>
 export const getClientById = (id) =>
   clients.find((client) => client.id === id) || null;
 
+const normalizeDoc = (d) => String(d || "").replace(/\D/g, "");
+
+export const getClientByDocumento = (documento) => {
+  const doc = normalizeDoc(documento);
+  if (!doc) return null;
+  return clients.find((c) => normalizeDoc(c.documento) === doc) || null;
+};
+
+export const updateClient = (id, data) => {
+  const client = clients.find((c) => c.id === id);
+  if (!client) return null;
+  if (data.nombre) client.nombre = data.nombre;
+  if (data.telefono) client.telefono = data.telefono;
+  if (data.email) client.email = data.email;
+  if (data.direccion) client.direccion = data.direccion;
+  return client;
+};
+
 export const getBranchById = (id) =>
   branches.find((branch) => branch.id === id) || null;
+
+export const updatePackagePrecio = (id, precioEnvio) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.precioEnvio = precioEnvio;
+  return pkg;
+};
+
+export const updatePackageOperador = (id, operadorId) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.operadorId = operadorId || null;
+  return pkg;
+};
+
+export const updatePackageRepartidor = (id, repartidorId) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.repartidorId = repartidorId || null;
+  return pkg;
+};
+
+export const markPackagePagado = (id, metodoPago = null) => {
+  const pkg = packages.find((p) => p.id === id);
+  if (!pkg) return null;
+  pkg.pagado = true;
+  pkg.metodoPago = ["tarjeta", "yape", "efectivo"].includes(metodoPago)
+    ? metodoPago
+    : null;
+  return pkg;
+};
 
 export const getRoleById = (id) =>
   roles.find((role) => role.id === id) || null;

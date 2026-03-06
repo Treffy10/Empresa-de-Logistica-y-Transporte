@@ -37,7 +37,9 @@ const toIsoUtc = (value) => {
 const mapPackageRow = (row) => ({
   id: row.id,
   codigoSeguimiento: row.codigo_seguimiento,
+  tipoEnvio: row.tipo_envio || "distribuidora_cliente",
   remitenteId: row.remitente_id,
+  remitenteClienteId: row.remitente_cliente_id,
   destinatarioId: row.destinatario_id,
   operadorId: row.operador_id,
   repartidorId: row.repartidor_id,
@@ -46,16 +48,27 @@ const mapPackageRow = (row) => ({
   destinoTexto: row.destino_texto || "",
   descripcion: row.descripcion,
   estadoActual: row.estado_actual,
+  reprogramacionFecha: row.reprogramacion_fecha,
+  reprogramacionHoraInicio: row.reprogramacion_hora_inicio,
+  reprogramacionHoraFin: row.reprogramacion_hora_fin,
+  reprogramacionDireccion: row.reprogramacion_direccion,
+  pesoKg: parseFloat(row.peso_kg) || 0,
+  precioEnvio: parseFloat(row.precio_envio) || 0,
+  quienPaga: row.quien_paga || "remitente",
+  pagado: Boolean(row.pagado),
+  metodoPago: row.metodo_pago || null,
   creadoEn: toIsoUtc(row.creado_en)
 });
 
 const mapPackageDetailsRow = (row) => ({
   ...mapPackageRow(row),
-  remitente: row.remitente_id
+  remitenteTipo: row.remitente_tipo || "Distribuidora",
+  remitente: row.remitente_ref_id
     ? {
-        id: row.remitente_id,
+        id: row.remitente_ref_id,
         nombre: row.remitente_nombre,
         razonSocial: row.remitente_razon_social,
+        documento: row.remitente_documento,
         telefono: row.remitente_telefono,
         direccion: row.remitente_direccion
       }
@@ -151,8 +164,41 @@ export const createClient = async (data) => {
   };
 };
 
+export const updateClient = async (id, data) => {
+  const { rows } = await query(
+    `UPDATE clientes
+     SET nombre = COALESCE($1, nombre),
+         telefono = COALESCE($2, telefono),
+         email = COALESCE($3, email),
+         direccion = COALESCE($4, direccion)
+     WHERE id = $5
+     RETURNING *`,
+    [
+      data.nombre || null,
+      data.telefono || null,
+      data.email || null,
+      data.direccion || null,
+      id
+    ]
+  );
+  return rows[0] || null;
+};
+
 export const getClientById = async (id) => {
   const { rows } = await query("SELECT * FROM clientes WHERE id = $1", [id]);
+  return rows[0] || null;
+};
+
+export const getClientByDocumento = async (documento) => {
+  const doc = String(documento || "").replace(/\D/g, "");
+  if (!doc) return null;
+  const { rows } = await query(
+    `SELECT * FROM clientes
+     WHERE regexp_replace(documento, '\D', '', 'g') = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [doc]
+  );
   return rows[0] || null;
 };
 
@@ -216,7 +262,7 @@ export const getRoleById = async (id) => {
 
 export const listUsers = async () => {
   const { rows } = await query(
-    "SELECT id, nombre, email, telefono, rol_id, sucursal_id, activo, creado_en FROM usuarios ORDER BY id DESC"
+    "SELECT id, nombre, email, telefono, rol_id, sucursal_id, cliente_id, activo, placa, vehiculo, creado_en FROM usuarios ORDER BY id DESC"
   );
   return rows.map((row) => ({
     id: row.id,
@@ -225,7 +271,10 @@ export const listUsers = async () => {
     telefono: row.telefono,
     rolId: row.rol_id,
     sucursalId: row.sucursal_id,
+    clienteId: row.cliente_id,
     activo: row.activo,
+    placa: row.placa || null,
+    vehiculo: row.vehiculo || null,
     creadoEn: row.creado_en
   }));
 };
@@ -276,7 +325,7 @@ export const listOperators = async () => {
 
 export const listCouriers = async () => {
   const { rows } = await query(
-    `SELECT u.id, u.nombre, u.telefono, u.email
+    `SELECT u.id, u.nombre, u.telefono, u.email, u.placa, u.vehiculo
      FROM usuarios u
      JOIN roles r ON r.id = u.rol_id
      WHERE r.nombre = $1 AND u.activo = true
@@ -287,23 +336,28 @@ export const listCouriers = async () => {
     id: row.id,
     nombre: row.nombre,
     telefono: row.telefono,
-    email: row.email
+    email: row.email,
+    placa: row.placa || null,
+    vehiculo: row.vehiculo || null
   }));
 };
 
 export const createUser = async (data) => {
   const { rows } = await query(
-    `INSERT INTO usuarios (nombre, email, telefono, rol_id, sucursal_id, activo, password_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO usuarios (nombre, email, telefono, rol_id, sucursal_id, cliente_id, activo, password_hash, placa, vehiculo)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
     [
       data.nombre || "Usuario",
       data.email || "",
       data.telefono || "",
       data.rolId,
-      data.sucursalId,
+      data.sucursalId ?? null,
+      data.clienteId ?? null,
       data.activo ?? true,
-      data.passwordHash || ""
+      data.passwordHash || "",
+      data.placa || null,
+      data.vehiculo || null
     ]
   );
   const row = rows[0];
@@ -314,6 +368,7 @@ export const createUser = async (data) => {
     telefono: row.telefono,
     rolId: row.rol_id,
     sucursalId: row.sucursal_id,
+    clienteId: row.cliente_id,
     activo: row.activo,
     creadoEn: row.creado_en
   };
@@ -328,8 +383,10 @@ export const updateUser = async (id, data) => {
          rol_id = $4,
          sucursal_id = $5,
          activo = $6,
-         password_hash = COALESCE($7, password_hash)
-     WHERE id = $8
+         password_hash = COALESCE($7, password_hash),
+         placa = $8,
+         vehiculo = $9
+     WHERE id = $10
      RETURNING *`,
     [
       data.nombre || "Usuario",
@@ -339,6 +396,8 @@ export const updateUser = async (id, data) => {
       data.sucursalId,
       data.activo ?? true,
       data.passwordHash || null,
+      data.placa ?? null,
+      data.vehiculo ?? null,
       id
     ]
   );
@@ -368,8 +427,13 @@ export const listPackagesDetailed = async (status) => {
   const baseQuery = `
     SELECT
       p.*,
-      r.id as remitente_id, r.nombre as remitente_nombre, r.razon_social as remitente_razon_social,
-      r.telefono as remitente_telefono, r.direccion as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.id ELSE r.id END as remitente_ref_id,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.nombre ELSE r.nombre END as remitente_nombre,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN NULL ELSE r.razon_social END as remitente_razon_social,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.documento ELSE NULL END as remitente_documento,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.telefono ELSE r.telefono END as remitente_telefono,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.direccion ELSE r.direccion END as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN 'Cliente' ELSE 'Distribuidora' END as remitente_tipo,
       d.id as destinatario_id, d.nombre as destinatario_nombre, d.documento as destinatario_documento,
       d.telefono as destinatario_telefono, d.email as destinatario_email, d.direccion as destinatario_direccion,
       u.id as operador_id, u.nombre as operador_nombre, u.telefono as operador_telefono, u.email as operador_email,
@@ -377,7 +441,8 @@ export const listPackagesDetailed = async (status) => {
       so.id as suc_origen_id, so.nombre as suc_origen_nombre, so.direccion as suc_origen_direccion,
       sd.id as suc_destino_id, sd.nombre as suc_destino_nombre, sd.direccion as suc_destino_direccion
     FROM paquetes p
-    JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN clientes rc ON rc.id = p.remitente_cliente_id
     JOIN clientes d ON d.id = p.destinatario_id
     LEFT JOIN usuarios u ON u.id = p.operador_id
     LEFT JOIN usuarios ur ON ur.id = p.repartidor_id
@@ -398,8 +463,13 @@ export const listPackagesByCourier = async (courierId) => {
   const baseQuery = `
     SELECT
       p.*,
-      r.id as remitente_id, r.nombre as remitente_nombre, r.razon_social as remitente_razon_social,
-      r.telefono as remitente_telefono, r.direccion as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.id ELSE r.id END as remitente_ref_id,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.nombre ELSE r.nombre END as remitente_nombre,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN NULL ELSE r.razon_social END as remitente_razon_social,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.documento ELSE NULL END as remitente_documento,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.telefono ELSE r.telefono END as remitente_telefono,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.direccion ELSE r.direccion END as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN 'Cliente' ELSE 'Distribuidora' END as remitente_tipo,
       d.id as destinatario_id, d.nombre as destinatario_nombre, d.documento as destinatario_documento,
       d.telefono as destinatario_telefono, d.email as destinatario_email, d.direccion as destinatario_direccion,
       u.id as operador_id, u.nombre as operador_nombre, u.telefono as operador_telefono, u.email as operador_email,
@@ -407,7 +477,8 @@ export const listPackagesByCourier = async (courierId) => {
       so.id as suc_origen_id, so.nombre as suc_origen_nombre, so.direccion as suc_origen_direccion,
       sd.id as suc_destino_id, sd.nombre as suc_destino_nombre, sd.direccion as suc_destino_direccion
     FROM paquetes p
-    JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN clientes rc ON rc.id = p.remitente_cliente_id
     JOIN clientes d ON d.id = p.destinatario_id
     LEFT JOIN usuarios u ON u.id = p.operador_id
     LEFT JOIN usuarios ur ON ur.id = p.repartidor_id
@@ -422,16 +493,20 @@ export const listPackagesByCourier = async (courierId) => {
 
 export const getPackageById = async (id) => {
   const { rows } = await query("SELECT * FROM paquetes WHERE id = $1", [id]);
-  return rows[0] || null;
+  return rows[0] ? mapPackageRow(rows[0]) : null;
 };
 
-export const getPackageDetailsById = async (id) => {
-  const { rows } = await query(
-    `
+export const listPackagesByClient = async (clienteId) => {
+  const baseQuery = `
     SELECT
       p.*,
-      r.id as remitente_id, r.nombre as remitente_nombre, r.razon_social as remitente_razon_social,
-      r.telefono as remitente_telefono, r.direccion as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.id ELSE r.id END as remitente_ref_id,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.nombre ELSE r.nombre END as remitente_nombre,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN NULL ELSE r.razon_social END as remitente_razon_social,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.documento ELSE NULL END as remitente_documento,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.telefono ELSE r.telefono END as remitente_telefono,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.direccion ELSE r.direccion END as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN 'Cliente' ELSE 'Distribuidora' END as remitente_tipo,
       d.id as destinatario_id, d.nombre as destinatario_nombre, d.documento as destinatario_documento,
       d.telefono as destinatario_telefono, d.email as destinatario_email, d.direccion as destinatario_direccion,
       u.id as operador_id, u.nombre as operador_nombre, u.telefono as operador_telefono, u.email as operador_email,
@@ -439,7 +514,76 @@ export const getPackageDetailsById = async (id) => {
       so.id as suc_origen_id, so.nombre as suc_origen_nombre, so.direccion as suc_origen_direccion,
       sd.id as suc_destino_id, sd.nombre as suc_destino_nombre, sd.direccion as suc_destino_direccion
     FROM paquetes p
-    JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN clientes rc ON rc.id = p.remitente_cliente_id
+    JOIN clientes d ON d.id = p.destinatario_id
+    LEFT JOIN usuarios u ON u.id = p.operador_id
+    LEFT JOIN usuarios ur ON ur.id = p.repartidor_id
+    JOIN sucursales so ON so.id = p.sucursal_origen_id
+    LEFT JOIN sucursales sd ON sd.id = p.sucursal_destino_id
+    WHERE (p.remitente_cliente_id = $1 OR p.destinatario_id = $1)
+    ORDER BY p.id DESC
+  `;
+  const { rows } = await query(baseQuery, [clienteId]);
+  return rows.map(mapPackageDetailsRow);
+};
+
+export const updatePackagePrecio = async (id, precioEnvio) => {
+  const { rows } = await query(
+    "UPDATE paquetes SET precio_envio = $1 WHERE id = $2 RETURNING *",
+    [precioEnvio, id]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
+export const updatePackageOperador = async (id, operadorId) => {
+  const { rows } = await query(
+    "UPDATE paquetes SET operador_id = $1 WHERE id = $2 RETURNING *",
+    [operadorId || null, id]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
+export const updatePackageRepartidor = async (id, repartidorId) => {
+  const { rows } = await query(
+    "UPDATE paquetes SET repartidor_id = $1 WHERE id = $2 RETURNING *",
+    [repartidorId || null, id]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
+export const markPackagePagado = async (id, metodoPago = null) => {
+  const validMetodo = ["tarjeta", "yape", "efectivo"].includes(metodoPago)
+    ? metodoPago
+    : null;
+  const { rows } = await query(
+    "UPDATE paquetes SET pagado = true, metodo_pago = $1 WHERE id = $2 RETURNING *",
+    [validMetodo, id]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
+export const getPackageDetailsById = async (id) => {
+  const { rows } = await query(
+    `
+    SELECT
+      p.*,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.id ELSE r.id END as remitente_ref_id,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.nombre ELSE r.nombre END as remitente_nombre,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN NULL ELSE r.razon_social END as remitente_razon_social,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.documento ELSE NULL END as remitente_documento,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.telefono ELSE r.telefono END as remitente_telefono,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.direccion ELSE r.direccion END as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN 'Cliente' ELSE 'Distribuidora' END as remitente_tipo,
+      d.id as destinatario_id, d.nombre as destinatario_nombre, d.documento as destinatario_documento,
+      d.telefono as destinatario_telefono, d.email as destinatario_email, d.direccion as destinatario_direccion,
+      u.id as operador_id, u.nombre as operador_nombre, u.telefono as operador_telefono, u.email as operador_email,
+      ur.id as repartidor_id, ur.nombre as repartidor_nombre, ur.telefono as repartidor_telefono, ur.email as repartidor_email,
+      so.id as suc_origen_id, so.nombre as suc_origen_nombre, so.direccion as suc_origen_direccion,
+      sd.id as suc_destino_id, sd.nombre as suc_destino_nombre, sd.direccion as suc_destino_direccion
+    FROM paquetes p
+    LEFT JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN clientes rc ON rc.id = p.remitente_cliente_id
     JOIN clientes d ON d.id = p.destinatario_id
     LEFT JOIN usuarios u ON u.id = p.operador_id
     LEFT JOIN usuarios ur ON ur.id = p.repartidor_id
@@ -475,7 +619,9 @@ export const createPackage = async (data) => {
       const { rows } = await query(
         `INSERT INTO paquetes (
           codigo_seguimiento,
+          tipo_envio,
           remitente_id,
+          remitente_cliente_id,
           destinatario_id,
           operador_id,
           repartidor_id,
@@ -483,13 +629,19 @@ export const createPackage = async (data) => {
           sucursal_destino_id,
           destino_texto,
           descripcion,
-          estado_actual
+          estado_actual,
+          peso_kg,
+          precio_envio,
+          quien_paga,
+          pagado
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING *`,
         [
           code,
-          data.remitenteId,
+          data.tipoEnvio || "distribuidora_cliente",
+          data.remitenteId || null,
+          data.remitenteClienteId || null,
           data.destinatarioId,
           data.operadorId || null,
           data.repartidorId || null,
@@ -497,7 +649,11 @@ export const createPackage = async (data) => {
           data.sucursalDestinoId || null,
           data.destinoTexto || "",
           data.descripcion || "",
-          "En Almacén"
+          "En Almacén",
+          data.pesoKg ?? 0,
+          data.precioEnvio ?? 10,
+          data.quienPaga || "remitente",
+          data.pagado ?? false
         ]
       );
       pkgRow = rows[0];
@@ -535,13 +691,46 @@ export const updatePackageStatus = async (id, estado, observacion = "") => {
   return rows[0] ? mapPackageRow(rows[0]) : null;
 };
 
+export const updatePackageReprogramar = async (
+  id,
+  { fecha, horaInicio, horaFin, direccion }
+) => {
+  const updates = [
+    "reprogramacion_fecha = $1",
+    "reprogramacion_hora_inicio = $2",
+    "reprogramacion_hora_fin = $3",
+    "reprogramacion_direccion = $4",
+    "estado_actual = $5"
+  ];
+  const params = [fecha, horaInicio, horaFin, direccion || null, "En Tránsito"];
+  if (direccion && String(direccion).trim()) {
+    updates.push("destino_texto = $6");
+    params.push(direccion.trim());
+  }
+  params.push(id);
+  const { rows } = await query(
+    `UPDATE paquetes SET ${updates.join(", ")} WHERE id = $${params.length} RETURNING *`,
+    params
+  );
+  await query(
+    "INSERT INTO historial_estados (paquete_id, estado, observacion) VALUES ($1, $2, $3)",
+    [id, "En Tránsito", "Reprogramado para entrega"]
+  );
+  return rows[0] ? mapPackageRow(rows[0]) : null;
+};
+
 export const getTrackingByCode = async (code) => {
   const { rows } = await query(
     `
     SELECT
       p.*,
-      r.id as remitente_id, r.nombre as remitente_nombre, r.razon_social as remitente_razon_social,
-      r.telefono as remitente_telefono, r.direccion as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.id ELSE r.id END as remitente_ref_id,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.nombre ELSE r.nombre END as remitente_nombre,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN NULL ELSE r.razon_social END as remitente_razon_social,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.documento ELSE NULL END as remitente_documento,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.telefono ELSE r.telefono END as remitente_telefono,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN rc.direccion ELSE r.direccion END as remitente_direccion,
+      CASE WHEN p.tipo_envio = 'cliente_cliente' THEN 'Cliente' ELSE 'Distribuidora' END as remitente_tipo,
       d.id as destinatario_id, d.nombre as destinatario_nombre, d.documento as destinatario_documento,
       d.telefono as destinatario_telefono, d.email as destinatario_email, d.direccion as destinatario_direccion,
       u.id as operador_id, u.nombre as operador_nombre, u.telefono as operador_telefono, u.email as operador_email,
@@ -549,7 +738,8 @@ export const getTrackingByCode = async (code) => {
       so.id as suc_origen_id, so.nombre as suc_origen_nombre, so.direccion as suc_origen_direccion,
       sd.id as suc_destino_id, sd.nombre as suc_destino_nombre, sd.direccion as suc_destino_direccion
     FROM paquetes p
-    JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN distribuidoras r ON r.id = p.remitente_id
+    LEFT JOIN clientes rc ON rc.id = p.remitente_cliente_id
     JOIN clientes d ON d.id = p.destinatario_id
     LEFT JOIN usuarios u ON u.id = p.operador_id
     LEFT JOIN usuarios ur ON ur.id = p.repartidor_id
@@ -567,16 +757,23 @@ export const getTrackingByCode = async (code) => {
     [pkg.id]
   );
   return {
+    id: pkg.id,
     codigoSeguimiento: pkg.codigoSeguimiento,
     estadoActual: pkg.estadoActual,
     descripcion: pkg.descripcion,
     destinoTexto: pkg.destinoTexto || "",
+    tipoEnvio: pkg.tipoEnvio,
+    remitenteTipo: pkg.remitenteTipo,
     remitente: pkg.remitente,
     destinatario: pkg.destinatario,
     operador: pkg.operador,
     repartidor: pkg.repartidor,
     sucursalOrigen: pkg.sucursalOrigen,
     sucursalDestino: pkg.sucursalDestino,
+    reprogramacionFecha: pkg.reprogramacionFecha,
+    reprogramacionHoraInicio: pkg.reprogramacionHoraInicio,
+    reprogramacionHoraFin: pkg.reprogramacionHoraFin,
+    reprogramacionDireccion: pkg.reprogramacionDireccion,
     historial: history.rows.map((row) => ({
       estado: row.estado,
       fechaHora: toIsoUtc(row.fecha_hora),

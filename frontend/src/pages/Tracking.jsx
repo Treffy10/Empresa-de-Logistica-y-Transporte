@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import Timeline from "../components/Timeline.jsx";
-import { getTracking } from "../services/api.js";
+import { getTracking, reprogramarTracking } from "../services/api.js";
 
 const normalizeDate = (value) => {
   if (!value) return null;
@@ -38,12 +38,25 @@ const statusTone = (status) => {
   return "bg-warning-50 text-warning-500";
 };
 
+const horaFinFromInicio = (horaInicio) => {
+  const [h, m] = horaInicio.split(":").map(Number);
+  const end = h + 3;
+  return `${String(end).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+};
+
 const Tracking = () => {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [tracking, setTracking] = useState(null);
   const [searchParams] = useSearchParams();
+  const [reprogramarModalOpen, setReprogramarModalOpen] = useState(false);
+  const [reprogramarForm, setReprogramarForm] = useState({
+    direccion: "",
+    fecha: "",
+    horaInicio: "09:00"
+  });
+  const [reprogramarLoading, setReprogramarLoading] = useState(false);
 
   const fetchTracking = async (value) => {
     if (!value.trim()) return;
@@ -72,6 +85,47 @@ const Tracking = () => {
     setCode(queryCode);
     fetchTracking(queryCode);
   }, [searchParams]);
+
+  const openReprogramarModal = () => {
+    setReprogramarForm({
+      direccion: tracking?.destinoTexto || tracking?.destinatario?.direccion || "",
+      fecha: "",
+      horaInicio: "09:00"
+    });
+    setReprogramarModalOpen(true);
+  };
+
+  const closeReprogramarModal = () => setReprogramarModalOpen(false);
+
+  const handleReprogramarChange = (e) => {
+    const { name, value } = e.target;
+    setReprogramarForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const confirmReprogramar = async () => {
+    const { direccion, fecha, horaInicio } = reprogramarForm;
+    if (!fecha || !horaInicio) {
+      setError("Ingresa la fecha y la hora.");
+      return;
+    }
+    if (!tracking?.codigoSeguimiento) return;
+    setReprogramarLoading(true);
+    setError("");
+    try {
+      const updated = await reprogramarTracking(tracking.codigoSeguimiento, {
+        fecha,
+        horaInicio,
+        horaFin: horaFinFromInicio(horaInicio),
+        direccion: direccion?.trim() || null
+      });
+      setTracking(updated);
+      closeReprogramarModal();
+    } catch (err) {
+      setError(err.message || "No se pudo reprogramar.");
+    } finally {
+      setReprogramarLoading(false);
+    }
+  };
 
   return (
     <section className="mx-auto max-w-5xl px-6 py-12">
@@ -139,6 +193,16 @@ const Tracking = () => {
               >
                 {tracking.estadoActual}
               </span>
+              {tracking.estadoActual === "Intento fallido" && (
+                <button
+                  type="button"
+                  onClick={openReprogramarModal}
+                  disabled={reprogramarLoading}
+                  className="rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-700"
+                >
+                  Reprogramar envío
+                </button>
+              )}
             </div>
           </div>
 
@@ -172,6 +236,23 @@ const Tracking = () => {
                 <p className="text-slate-800">
                   {tracking.descripcion || "Sin descripción"}
                 </p>
+                {tracking.reprogramacionFecha && (
+                  <div className="mt-4 rounded-xl bg-brand-50 border border-brand-100 px-4 py-3">
+                    <p className="text-xs font-semibold text-brand-700">Próxima entrega programada</p>
+                    <p className="mt-1 text-sm text-slate-800">
+                      {new Date(tracking.reprogramacionFecha + "T12:00:00").toLocaleDateString("es-PE", {
+                        weekday: "short",
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric"
+                      })}{" "}
+                      • {tracking.reprogramacionHoraInicio} — {tracking.reprogramacionHoraFin}
+                    </p>
+                    {tracking.reprogramacionDireccion && (
+                      <p className="mt-1 text-xs text-slate-600">{tracking.reprogramacionDireccion}</p>
+                    )}
+                  </div>
+                )}
                 <p className="mt-3 text-sm text-slate-500">Observaciones</p>
                 <p className="text-slate-800">
                   {tracking.historial?.[tracking.historial.length - 1]?.observacion ||
@@ -181,6 +262,94 @@ const Tracking = () => {
             </div>
 
             <Timeline items={tracking.historial} title="Línea de tiempo" />
+          </div>
+        </div>
+      )}
+
+      {reprogramarModalOpen && tracking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-brand-600 to-brand-700 px-6 py-5">
+              <div className="flex items-center gap-3 text-white">
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20">
+                  <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="M12 6v6l4 2" />
+                  </svg>
+                </span>
+                <div>
+                  <h3 className="text-xl font-bold">Reprogramar envío</h3>
+                  <p className="text-sm text-white/90">Define la nueva fecha y horario en que estarás disponible</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-5">
+              <label className="block">
+                <span className="text-sm font-semibold text-slate-700">Dirección (opcional)</span>
+                <input
+                  type="text"
+                  name="direccion"
+                  value={reprogramarForm.direccion}
+                  onChange={handleReprogramarChange}
+                  placeholder="Ej: Jr. Callao 456, Tingo María"
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-4">
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Fecha de entrega *</span>
+                  <input
+                    type="date"
+                    name="fecha"
+                    value={reprogramarForm.fecha}
+                    onChange={handleReprogramarChange}
+                    min={new Date().toISOString().split("T")[0]}
+                    className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-slate-700">Disponible desde *</span>
+                  <select
+                    name="horaInicio"
+                    value={reprogramarForm.horaInicio}
+                    onChange={handleReprogramarChange}
+                    className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+                  >
+                    {Array.from({ length: 13 }, (_, i) => i + 6).map((h) => {
+                      const val = `${String(h).padStart(2, "0")}:00`;
+                      return (
+                        <option key={val} value={val}>
+                          {val} - {horaFinFromInicio(val)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+              </div>
+              <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
+                <p className="text-xs font-medium text-slate-500">Ventana de entrega (3 horas)</p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">
+                  {reprogramarForm.horaInicio} — {horaFinFromInicio(reprogramarForm.horaInicio)}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end px-6 pb-6 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={closeReprogramarModal}
+                className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmReprogramar}
+                disabled={reprogramarLoading}
+                className="rounded-xl bg-brand-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-brand-700 disabled:opacity-60"
+              >
+                {reprogramarLoading ? "Guardando..." : "Reprogramar"}
+              </button>
+            </div>
           </div>
         </div>
       )}
