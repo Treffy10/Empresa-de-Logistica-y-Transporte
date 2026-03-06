@@ -27,7 +27,9 @@ const AdminUserEdit = () => {
     password: "",
     rolId: "",
     sucursalId: "",
-    activo: true
+    activo: true,
+    placa: "",
+    vehiculo: ""
   });
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
@@ -50,7 +52,9 @@ const AdminUserEdit = () => {
           ...splitPhoneValue(userData.telefono || ""),
           rolId: userData.rolId || "",
           sucursalId: userData.sucursalId || "",
-          activo: userData.activo ?? true
+          activo: userData.activo ?? true,
+          placa: userData.placa || "",
+          vehiculo: userData.vehiculo || ""
         }));
       } catch (err) {
         setError(err.message || "No se pudo cargar el usuario.");
@@ -119,6 +123,10 @@ const AdminUserEdit = () => {
       };
       if (form.password) {
         payload.password = form.password;
+      }
+      if (roles.find((r) => r.id === form.rolId)?.nombre === "Repartidor") {
+        payload.placa = form.placa?.trim() || null;
+        payload.vehiculo = form.vehiculo?.trim() || null;
       }
       await updateUser(id, payload);
       navigate("/admin/usuarios");
@@ -242,6 +250,32 @@ const AdminUserEdit = () => {
             <span className="mt-1 block text-xs text-red-600">{fieldErrors.sucursalId}</span>
           )}
         </label>
+        {roles.find((r) => r.id === form.rolId)?.nombre === "Repartidor" && (
+          <>
+            <label className="text-sm text-slate-600">
+              Placa
+              <input
+                name="placa"
+                value={form.placa}
+                onChange={handleChange}
+                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                placeholder="Ej: ABC-123"
+                autoComplete="off"
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Vehículo
+              <input
+                name="vehiculo"
+                value={form.vehiculo}
+                onChange={handleChange}
+                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                placeholder="Ej: Moto Honda 125, Camioneta Toyota Hilux"
+                autoComplete="off"
+              />
+            </label>
+          </>
+        )}
         <label className="flex items-center gap-2 text-sm text-slate-600">
           <input
             type="checkbox"

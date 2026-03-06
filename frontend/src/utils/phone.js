@@ -4,7 +4,10 @@ export const PHONE_COUNTRIES = [
   { iso: "CO", name: "Colombia", flag: "🇨🇴", dialCode: "57", digits: 10 },
   { iso: "EC", name: "Ecuador", flag: "🇪🇨", dialCode: "593", digits: 9 },
   { iso: "MX", name: "Mexico", flag: "🇲🇽", dialCode: "52", digits: 10 },
-  { iso: "US", name: "Estados Unidos", flag: "🇺🇸", dialCode: "1", digits: 10 }
+  { iso: "US", name: "Estados Unidos", flag: "🇺🇸", dialCode: "1", digits: 10 },
+  { iso: "BO", name: "Bolivia", flag: "🇧🇴", dialCode: "591", digits: 8 },
+  { iso: "AR", name: "Argentina", flag: "🇦🇷", dialCode: "54", digits: 10 },
+  { iso: "BR", name: "Brasil", flag: "🇧🇷", dialCode: "55", digits: 11 }
 ];
 
 export const DEFAULT_PHONE_COUNTRY = "PE";

@@ -298,6 +298,8 @@ export const createUser = (data) => {
     clienteId: data.clienteId || null,
     activo: data.activo ?? true,
     passwordHash: data.passwordHash || "",
+    placa: data.placa || null,
+    vehiculo: data.vehiculo || null,
     creadoEn: now()
   };
   users.push(user);
@@ -317,7 +319,9 @@ export const updateUser = (id, data) => {
     rolId: data.rolId ?? existing.rolId,
     sucursalId: data.sucursalId ?? existing.sucursalId,
     activo: data.activo ?? existing.activo,
-    passwordHash: data.passwordHash || existing.passwordHash
+    passwordHash: data.passwordHash || existing.passwordHash,
+    placa: data.placa !== undefined ? data.placa : existing.placa,
+    vehiculo: data.vehiculo !== undefined ? data.vehiculo : existing.vehiculo
   };
   users[index] = updated;
   const { passwordHash, ...safeUser } = updated;
@@ -373,6 +377,24 @@ export const getDistributorById = (id) =>
 
 export const getClientById = (id) =>
   clients.find((client) => client.id === id) || null;
+
+const normalizeDoc = (d) => String(d || "").replace(/\D/g, "");
+
+export const getClientByDocumento = (documento) => {
+  const doc = normalizeDoc(documento);
+  if (!doc) return null;
+  return clients.find((c) => normalizeDoc(c.documento) === doc) || null;
+};
+
+export const updateClient = (id, data) => {
+  const client = clients.find((c) => c.id === id);
+  if (!client) return null;
+  if (data.nombre) client.nombre = data.nombre;
+  if (data.telefono) client.telefono = data.telefono;
+  if (data.email) client.email = data.email;
+  if (data.direccion) client.direccion = data.direccion;
+  return client;
+};
 
 export const getBranchById = (id) =>
   branches.find((branch) => branch.id === id) || null;

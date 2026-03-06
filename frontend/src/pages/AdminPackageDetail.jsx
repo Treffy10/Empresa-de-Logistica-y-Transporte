@@ -10,7 +10,8 @@ import {
   updatePackageOperador,
   updatePackageRepartidor,
   listOperators,
-  listCouriers
+  listCouriers,
+  registrarPagoDestino
 } from "../services/api.js";
 
 const normalizeDate = (value) => {
@@ -269,6 +270,28 @@ const AdminPackageDetail = () => {
       setError(err.message || "No se pudo asignar.");
     } finally {
       setAssignLoading(false);
+    }
+  };
+
+  const canRegistrarPagoDestino =
+    roleName === "Repartidor" &&
+    pkg?.quienPaga === "destinatario" &&
+    !pkg?.pagado &&
+    String(pkg?.repartidor?.id) === String(user?.id) &&
+    (pkg?.precioEnvio || 0) > 0;
+
+  const handleRegistrarPagoDestino = async () => {
+    setActionLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      await registrarPagoDestino(pkg.id);
+      setNotice("Pago registrado (efectivo en entrega).");
+      await loadPackage();
+    } catch (err) {
+      setError(err.message || "No se pudo registrar el pago.");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -636,6 +659,16 @@ const AdminPackageDetail = () => {
                     {actionLoading ? "Procesando..." : "Marcar Salida"}
                   </button>
                 )
+              )}
+              {canRegistrarPagoDestino && (
+                <button
+                  type="button"
+                  onClick={handleRegistrarPagoDestino}
+                  disabled={actionLoading}
+                  className="mt-4 inline-flex items-center justify-center gap-2 rounded-full border-2 border-dashed border-brand-300 bg-brand-50 px-6 py-3 text-sm font-semibold text-brand-700 hover:bg-brand-100"
+                >
+                  💵 Registrar pago en efectivo (destinatario pagó)
+                </button>
               )}
               {pkg.estadoActual === "En Tránsito" && (
                 canConfirmEntrega && (

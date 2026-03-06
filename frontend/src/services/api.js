@@ -109,6 +109,12 @@ export const updatePackageRepartidor = (id, repartidorId) =>
     body: JSON.stringify({ repartidorId: repartidorId || null })
   });
 
+export const registrarPagoDestino = (id) =>
+  apiFetch(`/api/packages/${id}/registrar-pago-destino`, {
+    method: "PATCH",
+    body: JSON.stringify({ metodoPago: "efectivo" })
+  });
+
 export const listClients = () => apiFetch("/api/clients");
 export const getDniData = (dni) => apiFetch(`/api/dni/${dni}`);
 export const createClient = (payload) =>

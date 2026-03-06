@@ -121,6 +121,9 @@ const ClientRegister = () => {
           <p className="mt-1 text-sm text-slate-500">
             Regístrate para enviar paquetes y rastrear tus envíos
           </p>
+          <p className="mt-1 text-xs text-slate-400">
+            Si te agregaron como destinatario, usa el mismo DNI/RUC para ver y pagar tus paquetes.
+          </p>
           <form onSubmit={handleSubmit} className="mt-6 space-y-4" autoComplete="off">
             <div className="block text-sm text-slate-600">
               Documento *

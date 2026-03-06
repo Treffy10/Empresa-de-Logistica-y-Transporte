@@ -104,7 +104,10 @@ const PHONE_RULES = {
   CO: { name: "Colombia", dialCode: "57", digits: 10 },
   EC: { name: "Ecuador", dialCode: "593", digits: 9 },
   MX: { name: "Mexico", dialCode: "52", digits: 10 },
-  US: { name: "Estados Unidos", dialCode: "1", digits: 10 }
+  US: { name: "Estados Unidos", dialCode: "1", digits: 10 },
+  BO: { name: "Bolivia", dialCode: "591", digits: 8 },
+  AR: { name: "Argentina", dialCode: "54", digits: 10 },
+  BR: { name: "Brasil", dialCode: "55", digits: 11 }
 };
 
 const textValue = (value) => String(value || "").trim();
@@ -292,14 +295,38 @@ app.post("/api/auth/register", async (req, res) => {
   if (!clientRole) {
     return res.status(500).json({ error: "Rol Cliente no disponible" });
   }
-  const cliente = await call(repo.createClient, {
-    tipo: textValue(tipo) || "persona",
-    nombre: textValue(nombre),
-    documento: textValue(documento),
-    telefono: phone.e164,
-    email: textValue(email),
-    direccion: textValue(direccion)
-  });
+  let cliente;
+  const existingClient = repo.getClientByDocumento
+    ? await call(repo.getClientByDocumento, documento)
+    : null;
+  if (existingClient) {
+    cliente = {
+      id: existingClient.id,
+      tipo: existingClient.tipo,
+      nombre: existingClient.nombre,
+      documento: existingClient.documento,
+      telefono: existingClient.telefono,
+      email: existingClient.email,
+      direccion: existingClient.direccion
+    };
+    if (repo.updateClient) {
+      await call(repo.updateClient, existingClient.id, {
+        nombre: textValue(nombre),
+        telefono: phone.e164,
+        email: textValue(email),
+        direccion: textValue(direccion)
+      });
+    }
+  } else {
+    cliente = await call(repo.createClient, {
+      tipo: textValue(tipo) || "persona",
+      nombre: textValue(nombre),
+      documento: textValue(documento),
+      telefono: phone.e164,
+      email: textValue(email),
+      direccion: textValue(direccion)
+    });
+  }
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await call(repo.createUser, {
     nombre: textValue(nombre),
@@ -390,6 +417,33 @@ app.patch("/api/client/packages/:id/pagar", async (req, res) => {
   }
   const { metodoPago } = req.body || {};
   const updated = await call(repo.markPackagePagado, req.params.id, metodoPago);
+  res.json(updated);
+});
+
+app.patch("/api/packages/:id/registrar-pago-destino", async (req, res) => {
+  if (req.authUser?.roleName !== "Repartidor") {
+    return res.status(403).json({ error: "Solo el repartidor puede registrar este pago" });
+  }
+  const pkg = await call(repo.getPackageById, req.params.id);
+  if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
+  const repartidorId = pkg.repartidorId || pkg.repartidor_id;
+  if (String(repartidorId) !== String(req.authUser.id)) {
+    return res.status(403).json({ error: "Solo el repartidor asignado puede registrar el pago" });
+  }
+  if (pkg.quienPaga !== "destinatario") {
+    return res.status(400).json({ error: "Este paquete no es de pago por destinatario" });
+  }
+  if (pkg.pagado) {
+    return res.status(400).json({ error: "El paquete ya está pagado" });
+  }
+  if (pkg.pesoKg > 2 && (!pkg.precioEnvio || pkg.precioEnvio <= 0)) {
+    return res.status(400).json({ error: "El operador debe asignar el precio primero" });
+  }
+  if (!repo.markPackagePagado) {
+    return res.status(501).json({ error: "Pago no disponible" });
+  }
+  const { metodoPago } = req.body || {};
+  const updated = await call(repo.markPackagePagado, req.params.id, metodoPago || "efectivo");
   res.json(updated);
 });
 
@@ -821,7 +875,9 @@ app.get("/api/users/:id", requireAdmin, async (req, res) => {
     telefono: user.telefono || "",
     rolId: user.rol_id || user.rolId || null,
     sucursalId: user.sucursal_id || user.sucursalId || null,
-    activo: user.activo
+    activo: user.activo,
+    placa: user.placa || null,
+    vehiculo: user.vehiculo || null
   });
 });
 
@@ -883,6 +939,7 @@ app.put("/api/users/:id", requireAdmin, async (req, res) => {
   const phone = resolvePhone(req.body || {});
   if (!phone.ok) return res.status(400).json({ error: phone.error });
   const passwordHash = password ? await bcrypt.hash(password, 10) : null;
+  const { placa, vehiculo } = req.body || {};
   const updated = await call(repo.updateUser, id, {
     nombre: textValue(nombre),
     email: textValue(email),
@@ -890,7 +947,9 @@ app.put("/api/users/:id", requireAdmin, async (req, res) => {
     rolId,
     sucursalId,
     activo,
-    passwordHash
+    passwordHash,
+    placa: placa !== undefined ? (placa || null) : undefined,
+    vehiculo: vehiculo !== undefined ? (vehiculo || null) : undefined
   });
   if (!updated) {
     return res.status(400).json({ error: "No se pudo actualizar" });

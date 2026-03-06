@@ -17,7 +17,9 @@ const emptyForm = {
   password: "",
   rolId: "",
   sucursalId: "",
-  activo: true
+  activo: true,
+  placa: "",
+  vehiculo: ""
 };
 
 const AdminUserNew = () => {
@@ -150,12 +152,17 @@ const AdminUserNew = () => {
     }
     setLoading(true);
     try {
-      await createUser({
+      const payload = {
         ...form,
         telefonoPais: form.telefonoPais,
         telefonoNumero: phone.local,
         telefono: phone.e164
-      });
+      };
+      if (roles.find((r) => r.id === form.rolId)?.nombre === "Repartidor") {
+        payload.placa = form.placa?.trim() || null;
+        payload.vehiculo = form.vehiculo?.trim() || null;
+      }
+      await createUser(payload);
       setSuccess("Usuario creado con exito.");
       setTimeout(() => {
         navigate("/admin/usuarios");
@@ -303,6 +310,32 @@ const AdminUserNew = () => {
             <span className="mt-1 block text-xs text-red-600">{fieldErrors.sucursalId}</span>
           )}
         </label>
+        {roles.find((r) => r.id === form.rolId)?.nombre === "Repartidor" && (
+          <>
+            <label className="text-sm text-slate-600">
+              Placa
+              <input
+                name="placa"
+                value={form.placa}
+                onChange={handleChange}
+                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                placeholder="Ej: ABC-123"
+                autoComplete="off"
+              />
+            </label>
+            <label className="text-sm text-slate-600">
+              Vehículo
+              <input
+                name="vehiculo"
+                value={form.vehiculo}
+                onChange={handleChange}
+                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
+                placeholder="Ej: Moto Honda 125, Camioneta Toyota Hilux"
+                autoComplete="off"
+              />
+            </label>
+          </>
+        )}
         <label className="flex items-center gap-2 text-sm text-slate-600">
           <input
             type="checkbox"

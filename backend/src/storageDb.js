@@ -164,8 +164,41 @@ export const createClient = async (data) => {
   };
 };
 
+export const updateClient = async (id, data) => {
+  const { rows } = await query(
+    `UPDATE clientes
+     SET nombre = COALESCE($1, nombre),
+         telefono = COALESCE($2, telefono),
+         email = COALESCE($3, email),
+         direccion = COALESCE($4, direccion)
+     WHERE id = $5
+     RETURNING *`,
+    [
+      data.nombre || null,
+      data.telefono || null,
+      data.email || null,
+      data.direccion || null,
+      id
+    ]
+  );
+  return rows[0] || null;
+};
+
 export const getClientById = async (id) => {
   const { rows } = await query("SELECT * FROM clientes WHERE id = $1", [id]);
+  return rows[0] || null;
+};
+
+export const getClientByDocumento = async (documento) => {
+  const doc = String(documento || "").replace(/\D/g, "");
+  if (!doc) return null;
+  const { rows } = await query(
+    `SELECT * FROM clientes
+     WHERE regexp_replace(documento, '\D', '', 'g') = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [doc]
+  );
   return rows[0] || null;
 };
 
@@ -229,7 +262,7 @@ export const getRoleById = async (id) => {
 
 export const listUsers = async () => {
   const { rows } = await query(
-    "SELECT id, nombre, email, telefono, rol_id, sucursal_id, cliente_id, activo, creado_en FROM usuarios ORDER BY id DESC"
+    "SELECT id, nombre, email, telefono, rol_id, sucursal_id, cliente_id, activo, placa, vehiculo, creado_en FROM usuarios ORDER BY id DESC"
   );
   return rows.map((row) => ({
     id: row.id,
@@ -240,6 +273,8 @@ export const listUsers = async () => {
     sucursalId: row.sucursal_id,
     clienteId: row.cliente_id,
     activo: row.activo,
+    placa: row.placa || null,
+    vehiculo: row.vehiculo || null,
     creadoEn: row.creado_en
   }));
 };
@@ -290,7 +325,7 @@ export const listOperators = async () => {
 
 export const listCouriers = async () => {
   const { rows } = await query(
-    `SELECT u.id, u.nombre, u.telefono, u.email
+    `SELECT u.id, u.nombre, u.telefono, u.email, u.placa, u.vehiculo
      FROM usuarios u
      JOIN roles r ON r.id = u.rol_id
      WHERE r.nombre = $1 AND u.activo = true
@@ -301,14 +336,16 @@ export const listCouriers = async () => {
     id: row.id,
     nombre: row.nombre,
     telefono: row.telefono,
-    email: row.email
+    email: row.email,
+    placa: row.placa || null,
+    vehiculo: row.vehiculo || null
   }));
 };
 
 export const createUser = async (data) => {
   const { rows } = await query(
-    `INSERT INTO usuarios (nombre, email, telefono, rol_id, sucursal_id, cliente_id, activo, password_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO usuarios (nombre, email, telefono, rol_id, sucursal_id, cliente_id, activo, password_hash, placa, vehiculo)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
     [
       data.nombre || "Usuario",
@@ -318,7 +355,9 @@ export const createUser = async (data) => {
       data.sucursalId ?? null,
       data.clienteId ?? null,
       data.activo ?? true,
-      data.passwordHash || ""
+      data.passwordHash || "",
+      data.placa || null,
+      data.vehiculo || null
     ]
   );
   const row = rows[0];
@@ -344,8 +383,10 @@ export const updateUser = async (id, data) => {
          rol_id = $4,
          sucursal_id = $5,
          activo = $6,
-         password_hash = COALESCE($7, password_hash)
-     WHERE id = $8
+         password_hash = COALESCE($7, password_hash),
+         placa = $8,
+         vehiculo = $9
+     WHERE id = $10
      RETURNING *`,
     [
       data.nombre || "Usuario",
@@ -355,6 +396,8 @@ export const updateUser = async (id, data) => {
       data.sucursalId,
       data.activo ?? true,
       data.passwordHash || null,
+      data.placa ?? null,
+      data.vehiculo ?? null,
       id
     ]
   );

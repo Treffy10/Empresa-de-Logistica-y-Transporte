@@ -229,13 +229,20 @@ const ClientPackageDetail = () => {
                   </button>
                 </div>
               ) : (
-                <p className="mt-3 text-sm text-slate-500">
-                  {pkg.quienPaga === "destinatario"
-                    ? "Pago a cargo del destinatario al recibir"
-                    : pkg.pesoKg > 2 && (!pkg.precioEnvio || pkg.precioEnvio <= 0)
-                    ? "El operador debe asignar el precio antes de pagar (paquete > 2 kg)"
-                    : "Otro usuario debe realizar el pago"}
-                </p>
+                <div className="mt-3 space-y-2">
+                  <p className="text-sm text-slate-500">
+                    {pkg.quienPaga === "destinatario"
+                      ? "Pago a cargo del destinatario al recibir"
+                      : pkg.pesoKg > 2 && (!pkg.precioEnvio || pkg.precioEnvio <= 0)
+                      ? "El operador debe asignar el precio antes de pagar (paquete > 2 kg)"
+                      : "Otro usuario debe realizar el pago"}
+                  </p>
+                  {pkg.quienPaga === "destinatario" && !pkg.pagado && (
+                    <p className="text-xs text-slate-500">
+                      Si tienes cuenta: paga aquí con tarjeta, Yape o efectivo. Si pagarás en efectivo al repartidor, él registrará el pago al entregar.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
 
