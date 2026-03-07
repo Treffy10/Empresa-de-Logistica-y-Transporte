@@ -273,25 +273,40 @@ const AdminPackageDetail = () => {
     }
   };
 
-  const canRegistrarPagoDestino =
-    roleName === "Repartidor" &&
-    pkg?.quienPaga === "destinatario" &&
+  const canRegistrarPago =
+    (roleName === "Repartidor" ||
+      roleName === "Operador logístico" ||
+      roleName === "Administrador") &&
     !pkg?.pagado &&
-    String(pkg?.repartidor?.id) === String(user?.id) &&
-    (pkg?.precioEnvio || 0) > 0;
+    (pkg?.precioEnvio || 0) > 0 &&
+    (roleName !== "Repartidor" ||
+      String(pkg?.repartidor?.id) === String(user?.id));
 
-  const handleRegistrarPagoDestino = async () => {
-    setActionLoading(true);
+  const [pagoModalOpen, setPagoModalOpen] = useState(false);
+  const [pagoMetodo, setPagoMetodo] = useState(null);
+  const [pagoLoading, setPagoLoading] = useState(false);
+
+  const METODOS_PAGO = [
+    { id: "tarjeta", label: "Tarjeta de crédito/débito", icon: "💳" },
+    { id: "yape", label: "Yape", icon: "📱" },
+    { id: "efectivo", label: "Efectivo", icon: "💵" }
+  ];
+
+  const handleConfirmarPago = async () => {
+    if (!pagoMetodo) return;
+    setPagoLoading(true);
     setError("");
     setNotice("");
     try {
-      await registrarPagoDestino(pkg.id);
-      setNotice("Pago registrado (efectivo en entrega).");
+      await registrarPagoDestino(pkg.id, pagoMetodo);
+      setNotice(`Pago registrado (${pagoMetodo}).`);
+      setPagoModalOpen(false);
+      setPagoMetodo(null);
       await loadPackage();
     } catch (err) {
       setError(err.message || "No se pudo registrar el pago.");
     } finally {
-      setActionLoading(false);
+      setPagoLoading(false);
     }
   };
 
@@ -660,14 +675,18 @@ const AdminPackageDetail = () => {
                   </button>
                 )
               )}
-              {canRegistrarPagoDestino && (
+              {pkg?.pagado && (
+                <div className="mt-4 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700 font-semibold text-center">
+                  Pagado{pkg?.metodoPago ? ` (${pkg.metodoPago})` : ""} — {pkg?.precioEnvio || 0} soles
+                </div>
+              )}
+              {canRegistrarPago && (
                 <button
                   type="button"
-                  onClick={handleRegistrarPagoDestino}
-                  disabled={actionLoading}
+                  onClick={() => { setPagoMetodo(null); setPagoModalOpen(true); }}
                   className="mt-4 inline-flex items-center justify-center gap-2 rounded-full border-2 border-dashed border-brand-300 bg-brand-50 px-6 py-3 text-sm font-semibold text-brand-700 hover:bg-brand-100"
                 >
-                  💵 Registrar pago en efectivo (destinatario pagó)
+                  💰 Registrar pago ({pkg?.precioEnvio || 0} soles)
                 </button>
               )}
               {pkg.estadoActual === "En Tránsito" && (
@@ -861,6 +880,97 @@ const AdminPackageDetail = () => {
               >
                 {actionLoading ? "Guardando..." : "Registrar"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pagoModalOpen && canRegistrarPago && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="border-b border-slate-100 px-6 py-4">
+              <h3 className="text-lg font-bold text-slate-900">Registrar pago</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Monto: <strong>{pkg?.precioEnvio || 0} soles</strong>
+                {pkg?.quienPaga && (
+                  <span> — Paga: {pkg.quienPaga === "remitente" ? "Remitente" : "Destinatario"}</span>
+                )}
+              </p>
+            </div>
+            <div className="p-6">
+              {!pagoMetodo ? (
+                <div className="space-y-2">
+                  {METODOS_PAGO.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setPagoMetodo(m.id)}
+                      className="flex w-full items-center gap-4 rounded-xl border border-slate-200 px-4 py-4 text-left transition hover:border-brand-300 hover:bg-brand-50"
+                    >
+                      <span className="text-2xl">{m.icon}</span>
+                      <span className="font-medium text-slate-800">{m.label}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : pagoMetodo === "tarjeta" ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-slate-600">Simulación de pago con tarjeta</p>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-center">
+                    <span className="text-3xl">💳</span>
+                    <p className="mt-2 text-sm text-slate-700">
+                      Se registrará el pago de <strong>{pkg?.precioEnvio || 0} soles</strong> con tarjeta.
+                    </p>
+                  </div>
+                </div>
+              ) : pagoMetodo === "yape" ? (
+                <div className="space-y-4">
+                  <div className="flex flex-col items-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8">
+                    <div className="flex h-32 w-32 items-center justify-center rounded-2xl bg-white text-4xl shadow-sm">
+                      📱
+                    </div>
+                    <p className="mt-4 text-center text-sm font-medium text-slate-700">
+                      Abre Yape y escanea el código
+                    </p>
+                    <p className="mt-1 text-center text-xs text-slate-500">
+                      Monto: {pkg?.precioEnvio || 0} soles
+                    </p>
+                  </div>
+                  <p className="text-center text-xs text-slate-500">
+                    Simulación: haz clic en confirmar para registrar el pago
+                  </p>
+                </div>
+              ) : pagoMetodo === "efectivo" ? (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm text-slate-700">
+                      Se registrará el pago en efectivo por{" "}
+                      <strong>{pkg?.precioEnvio || 0} soles</strong>.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex gap-3 border-t border-slate-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (pagoMetodo) setPagoMetodo(null);
+                  else setPagoModalOpen(false);
+                }}
+                className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-600"
+              >
+                {pagoMetodo ? "Volver" : "Cancelar"}
+              </button>
+              {pagoMetodo && (
+                <button
+                  type="button"
+                  onClick={handleConfirmarPago}
+                  disabled={pagoLoading}
+                  className="flex-1 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {pagoLoading ? "Procesando..." : "Confirmar pago"}
+                </button>
+              )}
             </div>
           </div>
         </div>

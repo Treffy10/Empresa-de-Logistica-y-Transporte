@@ -12,6 +12,8 @@ const AdminUsers = () => {
   const [roles, setRoles] = useState([]);
   const [branches, setBranches] = useState([]);
   const [error, setError] = useState("");
+  const [deleteModal, setDeleteModal] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const navigate = useNavigate();
 
   const load = async () => {
@@ -41,14 +43,18 @@ const AdminUsers = () => {
     navigate(`/admin/usuarios/${id}/editar`);
   };
 
-  const handleDelete = async (id) => {
-    const ok = window.confirm("¿Eliminar este usuario?");
-    if (!ok) return;
+  const confirmDelete = async () => {
+    if (!deleteModal) return;
+    setDeleteLoading(true);
     try {
-      await deleteUser(id);
-      setUsers((prev) => prev.filter((user) => user.id !== id));
+      await deleteUser(deleteModal.id);
+      setUsers((prev) => prev.filter((user) => user.id !== deleteModal.id));
+      setDeleteModal(null);
     } catch (err) {
       setError(err.message || "No se pudo eliminar el usuario.");
+      setDeleteModal(null);
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -110,7 +116,7 @@ const AdminUsers = () => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDelete(user.id)}
+                    onClick={() => setDeleteModal(user)}
                     className="rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600"
                   >
                     Eliminar
@@ -124,6 +130,46 @@ const AdminUsers = () => {
           )}
         </div>
       </div>
+
+      {deleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+            <div className="flex flex-col items-center text-center">
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-red-50">
+                <svg viewBox="0 0 24 24" className="h-7 w-7 text-red-500" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 8v4M12 16h.01" />
+                </svg>
+              </span>
+              <h3 className="mt-4 text-lg font-semibold text-slate-900">
+                Eliminar usuario
+              </h3>
+              <p className="mt-2 text-sm text-slate-500">
+                ¿Estás seguro de eliminar a <strong className="text-slate-700">{deleteModal.nombre}</strong>?
+                Esta acción no se puede deshacer.
+              </p>
+            </div>
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteModal(null)}
+                disabled={deleteLoading}
+                className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleteLoading}
+                className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {deleteLoading ? "Eliminando..." : "Sí, eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
