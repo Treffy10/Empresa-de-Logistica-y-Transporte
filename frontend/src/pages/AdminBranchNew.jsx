@@ -58,16 +58,44 @@ const AdminBranchNew = () => {
 
   return (
     <div className="rounded-3xl border border-slate-100 bg-white p-8 shadow-sm">
+
       <div>
-        <h2 className="text-2xl font-semibold text-slate-900">
-          Registrar sucursal
-        </h2>
-        <p className="mt-1 text-sm text-slate-500">
+
+        {/* TITULO MEJORADO */}
+        <div className="flex items-center gap-3">
+
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-md">
+
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M3 3h18v18H3z" />
+              <path d="M7 7h3v3H7z" />
+              <path d="M14 7h3v3h-3z" />
+              <path d="M7 14h3v3H7z" />
+              <path d="M14 14h3v3h-3z" />
+            </svg>
+
+          </div>
+
+          <h2 className="text-2xl font-bold bg-gradient-to-r from-green-600 to-emerald-500 bg-clip-text text-transparent tracking-wide">
+            Registrar sucursal
+          </h2>
+
+        </div>
+
+        <p className="mt-2 text-sm text-slate-500">
           Completa la información de la sucursal
         </p>
+
       </div>
 
       <form onSubmit={handleSubmit} className="mt-6 grid gap-4">
+
         <label className="text-sm text-slate-600">
           Nombre *
           <input
@@ -81,9 +109,12 @@ const AdminBranchNew = () => {
             required
           />
           {fieldErrors.nombre && (
-            <span className="mt-1 block text-xs text-red-600">{fieldErrors.nombre}</span>
+            <span className="mt-1 block text-xs text-red-600">
+              {fieldErrors.nombre}
+            </span>
           )}
         </label>
+
         <label className="text-sm text-slate-600">
           Direccion *
           <input
@@ -97,25 +128,32 @@ const AdminBranchNew = () => {
             required
           />
           {fieldErrors.direccion && (
-            <span className="mt-1 block text-xs text-red-600">{fieldErrors.direccion}</span>
+            <span className="mt-1 block text-xs text-red-600">
+              {fieldErrors.direccion}
+            </span>
           )}
         </label>
+
         <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
+
           <button
             type="button"
             onClick={handleCancel}
-            className="rounded-full border border-slate-200 px-6 py-3 text-sm font-semibold text-slate-600"
+            className="rounded-full border border-slate-200 px-6 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-100 transition"
           >
             Cancelar
           </button>
+
           <button
             type="submit"
             disabled={loading}
-            className="rounded-full bg-brand-600 px-8 py-3 text-sm font-semibold text-white"
+            className="rounded-full bg-gradient-to-r from-green-600 to-emerald-600 px-8 py-3 text-sm font-semibold text-white shadow-md hover:scale-105 transition"
           >
             {loading ? "Guardando..." : "Guardar sucursal"}
           </button>
+
         </div>
+
       </form>
 
       {error && (
@@ -123,11 +161,13 @@ const AdminBranchNew = () => {
           {error}
         </div>
       )}
+
       {success && (
         <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
           {success}
         </div>
       )}
+
     </div>
   );
 };

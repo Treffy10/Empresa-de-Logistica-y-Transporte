@@ -124,7 +124,7 @@ const AdminUserEdit = () => {
       if (form.password) {
         payload.password = form.password;
       }
-      if (roles.find((r) => r.id === form.rolId)?.nombre === "Repartidor") {
+      if (roles.find((r) => String(r.id) === String(form.rolId))?.nombre === "Repartidor") {
         payload.placa = form.placa?.trim() || null;
         payload.vehiculo = form.vehiculo?.trim() || null;
       }
@@ -250,7 +250,7 @@ const AdminUserEdit = () => {
             <span className="mt-1 block text-xs text-red-600">{fieldErrors.sucursalId}</span>
           )}
         </label>
-        {roles.find((r) => r.id === form.rolId)?.nombre === "Repartidor" && (
+        {roles.find((r) => String(r.id) === String(form.rolId))?.nombre === "Repartidor" && (
           <>
             <label className="text-sm text-slate-600">
               Placa

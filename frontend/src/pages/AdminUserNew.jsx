@@ -53,16 +53,18 @@ const AdminUserNew = () => {
 
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;
+
     setFieldErrors((prev) => ({ ...prev, [name]: "" }));
     if (name === "documento") setDniError("");
+
     setForm((prev) => ({
       ...prev,
       [name]:
         type === "checkbox"
           ? checked
           : name === "telefonoNumero" || name === "documento"
-            ? onlyDigits(value)
-            : value
+          ? onlyDigits(value)
+          : value
     }));
   };
 
@@ -74,18 +76,25 @@ const AdminUserNew = () => {
 
   useEffect(() => {
     const dni = onlyDigits(form.documento);
+
     if (dni.length < 8) {
       lastDniRef.current = "";
       return;
     }
+
     if (dni === lastDniRef.current) return;
+
     let cancelled = false;
+
     const timer = setTimeout(async () => {
       setDniLoading(true);
       setDniError("");
+
       try {
         const result = await getDniData(dni);
+
         if (cancelled) return;
+
         const fullName =
           String(result.nombreCompleto || "").trim() ||
           [
@@ -95,12 +104,14 @@ const AdminUserNew = () => {
           ]
             .filter(Boolean)
             .join(" ");
+
         if (fullName) {
           setForm((prev) => ({ ...prev, documento: dni, nombre: fullName }));
         }
+
       } catch (err) {
         if (!cancelled) {
-          setDniError(err.message || "No se pudo consultar DNI. Completa manualmente.");
+          setDniError(err.message || "No se pudo consultar DNI.");
         }
       } finally {
         if (!cancelled) {
@@ -109,6 +120,7 @@ const AdminUserNew = () => {
         }
       }
     }, 300);
+
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -121,36 +133,30 @@ const AdminUserNew = () => {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+
     setError("");
     setSuccess("");
+
     const nextErrors = {};
-    if (
-      !form.nombre.trim() ||
-      !form.email.trim() ||
-      !form.password.trim() ||
-      !form.rolId ||
-      !form.sucursalId
-    ) {
-      if (!form.nombre.trim()) nextErrors.nombre = "El nombre es obligatorio.";
-      if (!form.email.trim()) nextErrors.email = "El email es obligatorio.";
-      if (!form.password.trim()) nextErrors.password = "La contraseña es obligatoria.";
-      if (!form.rolId) nextErrors.rolId = "Selecciona un rol.";
-      if (!form.sucursalId) nextErrors.sucursalId = "Selecciona una sucursal.";
-    }
-    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
-      nextErrors.email = "Ingresa un email valido.";
-    }
-    if (form.password.trim().length < 6) {
-      nextErrors.password = "La contraseña debe tener al menos 6 caracteres.";
-    }
+
+    if (!form.nombre.trim()) nextErrors.nombre = "El nombre es obligatorio.";
+    if (!form.email.trim()) nextErrors.email = "El email es obligatorio.";
+    if (!form.password.trim()) nextErrors.password = "La contraseña es obligatoria.";
+    if (!form.rolId) nextErrors.rolId = "Selecciona un rol.";
+    if (!form.sucursalId) nextErrors.sucursalId = "Selecciona una sucursal.";
+
     const phone = buildPhoneValue(form.telefonoPais, form.telefonoNumero);
     if (!phone.ok) nextErrors.telefonoNumero = phone.error;
+
     setFieldErrors(nextErrors);
+
     if (Object.keys(nextErrors).length > 0) {
       setError("Revisa los campos marcados.");
       return;
     }
+
     setLoading(true);
+
     try {
       const payload = {
         ...form,
@@ -158,15 +164,18 @@ const AdminUserNew = () => {
         telefonoNumero: phone.local,
         telefono: phone.e164
       };
-      if (roles.find((r) => r.id === form.rolId)?.nombre === "Repartidor") {
+
+      if (roles.find((r) => String(r.id) === String(form.rolId))?.nombre === "Repartidor") {
         payload.placa = form.placa?.trim() || null;
         payload.vehiculo = form.vehiculo?.trim() || null;
       }
+
       await createUser(payload);
-      setSuccess("Usuario creado con exito.");
-      setTimeout(() => {
-        navigate("/admin/usuarios");
-      }, 900);
+
+      setSuccess("Usuario creado con éxito.");
+
+      setTimeout(() => navigate("/admin/usuarios"), 900);
+
     } catch (err) {
       setError(err.message || "No se pudo registrar el usuario.");
     } finally {
@@ -175,79 +184,73 @@ const AdminUserNew = () => {
   };
 
   return (
-    <div className="rounded-3xl border border-slate-100 bg-white p-8 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="rounded-3xl border border-slate-100 bg-white p-10 shadow-lg">
+
+      {/* HEADER */}
+      <div className="flex items-center gap-4 mb-8">
+
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-green-100 text-green-700 shadow-sm">
+          👤
+        </div>
+
         <div>
-          <h2 className="text-2xl font-semibold text-slate-900">
-            Registrar usuario
+          <h2 className="text-3xl font-extrabold bg-gradient-to-r from-green-700 via-green-600 to-emerald-500 bg-clip-text text-transparent">
+            Registrar Usuario
           </h2>
-          <p className="mt-1 text-sm text-slate-500">
+
+          <div className="h-1 w-24 rounded-full bg-gradient-to-r from-green-600 to-emerald-400 mt-1"></div>
+
+          <p className="text-sm text-slate-500 mt-2">
             Completa la información del usuario
           </p>
         </div>
+
       </div>
 
-      <form onSubmit={handleSubmit} className="mt-6 grid gap-4 md:grid-cols-2">
+      <form onSubmit={handleSubmit} className="grid gap-5 md:grid-cols-2">
+
+        {/* DNI */}
         <label className="text-sm text-slate-600">
-          DNI (opcional)
+          DNI
           <input
             name="documento"
             value={form.documento}
             onChange={handleChange}
             onKeyDown={handleDocumentoKeyDown}
-            inputMode="numeric"
             maxLength={8}
-            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
-            placeholder="8 dígitos para autollenar nombre"
-            autoComplete="off"
+            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200"
           />
-          {dniLoading && (
-            <span className="mt-1 block text-xs text-brand-700">Consultando DNI...</span>
-          )}
-          {dniError && (
-            <span className="mt-1 block text-xs text-amber-700">{dniError}</span>
-          )}
         </label>
+
+        {/* NOMBRE */}
         <label className="text-sm text-slate-600">
           Nombre *
           <input
             name="nombre"
             value={form.nombre}
             onChange={handleChange}
-            className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
-              fieldErrors.nombre ? "border-red-300" : "border-slate-200"
-            }`}
-            placeholder="Nombre completo"
-            autoComplete="off"
-            required
+            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200"
           />
-          {fieldErrors.nombre && (
-            <span className="mt-1 block text-xs text-red-600">{fieldErrors.nombre}</span>
-          )}
         </label>
+
+        {/* EMAIL */}
         <label className="text-sm text-slate-600">
           Email *
           <input
             name="email"
             value={form.email}
             onChange={handleChange}
-            className={`mt-2 w-full rounded-xl border bg-transparent px-4 py-3 text-sm ${
-              fieldErrors.email ? "border-red-300" : "border-slate-200"
-            }`}
-            placeholder="correo@empresa.com"
-            autoComplete="new-email"
-            required
+            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200"
           />
-          {fieldErrors.email && (
-            <span className="mt-1 block text-xs text-red-600">{fieldErrors.email}</span>
-          )}
         </label>
+
         <PhoneField
           countryValue={form.telefonoPais}
           numberValue={form.telefonoNumero}
           onChange={handleChange}
-          error={fieldErrors.telefonoNumero}
         />
+
+        {/* PASSWORD */}
         <label className="text-sm text-slate-600">
           Contraseña *
           <input
@@ -255,27 +258,18 @@ const AdminUserNew = () => {
             name="password"
             value={form.password}
             onChange={handleChange}
-            className={`mt-2 w-full rounded-xl border bg-transparent px-4 py-3 text-sm ${
-              fieldErrors.password ? "border-red-300" : "border-slate-200"
-            }`}
-            placeholder="Mínimo 6 caracteres"
-            autoComplete="new-password"
-            required
+            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200"
           />
-          {fieldErrors.password && (
-            <span className="mt-1 block text-xs text-red-600">{fieldErrors.password}</span>
-          )}
         </label>
+
+        {/* ROL */}
         <label className="text-sm text-slate-600">
           Rol *
           <select
             name="rolId"
             value={form.rolId}
             onChange={handleChange}
-            className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
-              fieldErrors.rolId ? "border-red-300" : "border-slate-200"
-            }`}
-            required
+            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200"
           >
             <option value="">Seleccionar rol</option>
             {roles.map((role) => (
@@ -284,20 +278,16 @@ const AdminUserNew = () => {
               </option>
             ))}
           </select>
-          {fieldErrors.rolId && (
-            <span className="mt-1 block text-xs text-red-600">{fieldErrors.rolId}</span>
-          )}
         </label>
+
+        {/* SUCURSAL */}
         <label className="text-sm text-slate-600">
           Sucursal *
           <select
             name="sucursalId"
             value={form.sucursalId}
             onChange={handleChange}
-            className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
-              fieldErrors.sucursalId ? "border-red-300" : "border-slate-200"
-            }`}
-            required
+            className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200"
           >
             <option value="">Seleccionar sucursal</option>
             {branches.map((branch) => (
@@ -306,74 +296,43 @@ const AdminUserNew = () => {
               </option>
             ))}
           </select>
-          {fieldErrors.sucursalId && (
-            <span className="mt-1 block text-xs text-red-600">{fieldErrors.sucursalId}</span>
-          )}
         </label>
-        {roles.find((r) => r.id === form.rolId)?.nombre === "Repartidor" && (
-          <>
-            <label className="text-sm text-slate-600">
-              Placa
-              <input
-                name="placa"
-                value={form.placa}
-                onChange={handleChange}
-                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
-                placeholder="Ej: ABC-123"
-                autoComplete="off"
-              />
-            </label>
-            <label className="text-sm text-slate-600">
-              Vehículo
-              <input
-                name="vehiculo"
-                value={form.vehiculo}
-                onChange={handleChange}
-                className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
-                placeholder="Ej: Moto Honda 125, Camioneta Toyota Hilux"
-                autoComplete="off"
-              />
-            </label>
-          </>
-        )}
-        <label className="flex items-center gap-2 text-sm text-slate-600">
-          <input
-            type="checkbox"
-            name="activo"
-            checked={form.activo}
-            onChange={handleChange}
-            className="h-4 w-4"
-          />
-          Usuario activo
-        </label>
-        <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row sm:justify-between">
+
+        {/* BOTONES */}
+        <div className="md:col-span-2 flex justify-between mt-6">
+
           <button
             type="button"
             onClick={handleCancel}
-            className="rounded-full border border-slate-200 px-6 py-3 text-sm font-semibold text-slate-600"
+            className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-100"
           >
             Cancelar
           </button>
+
           <button
             type="submit"
             disabled={loading}
-            className="rounded-full bg-brand-600 px-8 py-3 text-sm font-semibold text-white"
+            className="rounded-full bg-green-600 px-8 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-green-700 hover:scale-105"
           >
             {loading ? "Guardando..." : "Guardar usuario"}
           </button>
+
         </div>
+
       </form>
 
       {error && (
-        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
+
       {success && (
-        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+        <div className="mt-6 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
           {success}
         </div>
       )}
+
     </div>
   );
 };

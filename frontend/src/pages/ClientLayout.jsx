@@ -5,6 +5,8 @@ const ClientLayout = () => {
   const user = getUser();
   const navigate = useNavigate();
 
+  const firstName = user?.nombre ? user.nombre.split(" ")[0] : user?.email;
+
   const handleLogout = () => {
     clearToken();
     navigate("/");
@@ -12,10 +14,14 @@ const ClientLayout = () => {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-100">
-        <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
-          <Link to="/cliente" className="flex items-center gap-3 text-lg font-bold text-slate-900">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-600 text-white">
+
+      {/* HEADER */}
+      <header className="bg-emerald-600 shadow-md border-b border-emerald-700">
+        <div className="w-full px-6 py-4 flex items-center justify-between">
+
+          {/* LOGO */}
+          <Link to="/cliente" className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-emerald-600 shadow">
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M3 7h11v10H3z" />
                 <path d="M14 10h4l3 3v4h-7z" />
@@ -23,59 +29,84 @@ const ClientLayout = () => {
                 <circle cx="18" cy="19" r="1.5" />
               </svg>
             </span>
-            <span>
-              LogiMed
-              <span className="block text-xs font-medium text-slate-400">Mi cuenta</span>
+
+            <span className="leading-tight">
+              <span className="block text-xl font-bold text-white tracking-wide">
+                SelvaCargo
+              </span>
+              <span className="text-xs text-emerald-100 font-medium">
+                Mi cuenta
+              </span>
             </span>
           </Link>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-600">{user?.nombre || user?.email}</span>
+
+          {/* USER */}
+          <div className="flex items-center gap-5">
+
+            <span className="text-sm font-medium text-white">
+              Hola, {firstName}
+            </span>
+
             <button
-              type="button"
               onClick={handleLogout}
-              className="text-sm font-semibold text-slate-500 hover:text-slate-700"
+              className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-emerald-600 shadow transition transform hover:scale-110 hover:bg-emerald-50 active:scale-95"
             >
               Cerrar sesión
             </button>
+
           </div>
+
         </div>
-        <nav className="mx-auto max-w-6xl px-6 flex gap-6 border-t border-slate-100">
+
+        {/* NAV */}
+        <nav className="w-full px-6 flex gap-8 border-t border-emerald-500">
           <NavLink
             to="/cliente"
             end
             className={({ isActive }) =>
-              `py-3 text-sm font-medium border-b-2 ${
-                isActive ? "border-brand-600 text-brand-600" : "border-transparent text-slate-600 hover:text-brand-600"
+              `py-3 text-sm font-semibold border-b-2 transition ${
+                isActive
+                  ? "border-white text-white"
+                  : "border-transparent text-emerald-100 hover:text-white"
               }`
             }
           >
             Inicio
           </NavLink>
+
           <NavLink
             to="/cliente/enviar"
             className={({ isActive }) =>
-              `py-3 text-sm font-medium border-b-2 ${
-                isActive ? "border-brand-600 text-brand-600" : "border-transparent text-slate-600 hover:text-brand-600"
+              `py-3 text-sm font-semibold border-b-2 transition ${
+                isActive
+                  ? "border-white text-white"
+                  : "border-transparent text-emerald-100 hover:text-white"
               }`
             }
           >
-            Enviar paquete
+            Registrar paquete
           </NavLink>
+
           <NavLink
             to="/cliente/rastrear"
             className={({ isActive }) =>
-              `py-3 text-sm font-medium border-b-2 ${
-                isActive ? "border-brand-600 text-brand-600" : "border-transparent text-slate-600 hover:text-brand-600"
+              `py-3 text-sm font-semibold border-b-2 transition ${
+                isActive
+                  ? "border-white text-white"
+                  : "border-transparent text-emerald-100 hover:text-white"
               }`
             }
           >
             Rastrear
           </NavLink>
+
           <NavLink
             to="/cliente/envios"
             className={({ isActive }) =>
-              `py-3 text-sm font-medium border-b-2 ${
-                isActive ? "border-brand-600 text-brand-600" : "border-transparent text-slate-600 hover:text-brand-600"
+              `py-3 text-sm font-semibold border-b-2 transition ${
+                isActive
+                  ? "border-white text-white"
+                  : "border-transparent text-emerald-100 hover:text-white"
               }`
             }
           >
@@ -83,9 +114,12 @@ const ClientLayout = () => {
           </NavLink>
         </nav>
       </header>
-      <main className="mx-auto max-w-6xl px-6 py-8">
+
+      {/* CONTENIDO */}
+      <main className="w-full">
         <Outlet />
       </main>
+
     </div>
   );
 };

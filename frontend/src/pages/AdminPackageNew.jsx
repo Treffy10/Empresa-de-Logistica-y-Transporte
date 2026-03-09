@@ -27,7 +27,9 @@ const emptyForm = {
   repartidorId: "",
   sucursalOrigenId: "",
   destinoTexto: "",
-  descripcion: ""
+  descripcion: "",
+  pesoKg: "",
+  quienPaga: "remitente"
 };
 
 const emptyClientForm = {
@@ -301,6 +303,8 @@ const AdminPackageNew = () => {
     if (!form.sucursalOrigenId) nextErrors.sucursalOrigenId = "Selecciona una sucursal.";
     if (!form.destinoTexto.trim()) nextErrors.destinoTexto = "Ingresa el destino.";
     if (!form.descripcion.trim()) nextErrors.descripcion = "Ingresa la descripcion.";
+    const peso = parseFloat(form.pesoKg) || 0;
+    if (peso <= 0) nextErrors.pesoKg = "El peso debe ser mayor a 0.";
     setFieldErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       setError("Revisa los campos marcados.");
@@ -308,6 +312,7 @@ const AdminPackageNew = () => {
     }
     setLoading(true);
     try {
+      const precioEnvio = peso <= 2 ? 10 : 0;
       const payload = {
         ...form,
         tipoEnvio: form.tipoEnvio,
@@ -315,7 +320,10 @@ const AdminPackageNew = () => {
         remitenteClienteId: isClientToClient ? form.remitenteClienteId : "",
         operadorId: operadorFinal,
         destinoTexto: form.destinoTexto.trim(),
-        descripcion: form.descripcion.trim()
+        descripcion: form.descripcion.trim(),
+        pesoKg: peso,
+        precioEnvio,
+        quienPaga: form.quienPaga
       };
       const created = await createPackage(payload);
       setSuccess("Paquete creado con exito.");
@@ -596,6 +604,66 @@ const AdminPackageNew = () => {
                 <span className="mt-1 block text-xs text-red-600">{fieldErrors.descripcion}</span>
               )}
             </label>
+            <label className="text-sm text-slate-600">
+              Peso (kg) *
+              <input
+                name="pesoKg"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={form.pesoKg}
+                onChange={handleChange}
+                className={`mt-2 w-full rounded-xl border px-4 py-3 text-sm ${
+                  fieldErrors.pesoKg ? "border-red-300" : "border-slate-200"
+                }`}
+                placeholder="Ej: 1.5"
+                required
+              />
+              {fieldErrors.pesoKg && (
+                <span className="mt-1 block text-xs text-red-600">{fieldErrors.pesoKg}</span>
+              )}
+            </label>
+            <div className="text-sm text-slate-600">
+              <span className="font-medium">¿Quién paga el envío?</span>
+              <div className="mt-3 space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="quienPaga"
+                    value="remitente"
+                    checked={form.quienPaga === "remitente"}
+                    onChange={handleChange}
+                    className="text-brand-600"
+                  />
+                  <span className="text-sm text-slate-700">Remitente paga ahora</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="quienPaga"
+                    value="destinatario"
+                    checked={form.quienPaga === "destinatario"}
+                    onChange={handleChange}
+                    className="text-brand-600"
+                  />
+                  <span className="text-sm text-slate-700">El destinatario paga al recibir</span>
+                </label>
+              </div>
+            </div>
+            {(() => {
+              const peso = parseFloat(form.pesoKg) || 0;
+              if (peso <= 0) return null;
+              const precio = peso <= 2 ? 10 : 0;
+              return (
+                <div className="md:col-span-2 rounded-xl bg-brand-50 border border-brand-100 px-4 py-3 text-sm text-brand-800">
+                  {precio > 0 ? (
+                    <>Precio del envío: <strong>{precio} soles</strong></>
+                  ) : (
+                    <>Paquete mayor a 2 kg. El operador deberá asignar el precio desde el detalle del paquete.</>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
