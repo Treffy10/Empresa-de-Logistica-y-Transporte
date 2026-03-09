@@ -421,17 +421,17 @@ app.patch("/api/client/packages/:id/pagar", async (req, res) => {
 });
 
 app.patch("/api/packages/:id/registrar-pago-destino", async (req, res) => {
-  if (req.authUser?.roleName !== "Repartidor") {
-    return res.status(403).json({ error: "Solo el repartidor puede registrar este pago" });
+  const roleName = req.authUser?.roleName;
+  if (roleName !== "Repartidor" && roleName !== "Operador logístico" && roleName !== "Administrador") {
+    return res.status(403).json({ error: "No autorizado" });
   }
   const pkg = await call(repo.getPackageById, req.params.id);
   if (!pkg) return res.status(404).json({ error: "Paquete no encontrado" });
-  const repartidorId = pkg.repartidorId || pkg.repartidor_id;
-  if (String(repartidorId) !== String(req.authUser.id)) {
-    return res.status(403).json({ error: "Solo el repartidor asignado puede registrar el pago" });
-  }
-  if (pkg.quienPaga !== "destinatario") {
-    return res.status(400).json({ error: "Este paquete no es de pago por destinatario" });
+  if (roleName === "Repartidor") {
+    const repartidorId = pkg.repartidorId || pkg.repartidor_id;
+    if (String(repartidorId) !== String(req.authUser.id)) {
+      return res.status(403).json({ error: "Solo el repartidor asignado puede registrar el pago" });
+    }
   }
   if (pkg.pagado) {
     return res.status(400).json({ error: "El paquete ya está pagado" });
@@ -443,7 +443,9 @@ app.patch("/api/packages/:id/registrar-pago-destino", async (req, res) => {
     return res.status(501).json({ error: "Pago no disponible" });
   }
   const { metodoPago } = req.body || {};
-  const updated = await call(repo.markPackagePagado, req.params.id, metodoPago || "efectivo");
+  const validMethods = ["tarjeta", "yape", "efectivo"];
+  const method = validMethods.includes(metodoPago) ? metodoPago : "efectivo";
+  const updated = await call(repo.markPackagePagado, req.params.id, method);
   res.json(updated);
 });
 
@@ -604,7 +606,9 @@ app.post("/api/packages", async (req, res) => {
     destinoTexto,
     descripcion,
     operadorId,
-    repartidorId
+    repartidorId,
+    pesoKg,
+    quienPaga
   } = req.body;
   const shippingType = textValue(tipoEnvio || "distribuidora_cliente");
   if (!["distribuidora_cliente", "cliente_cliente"].includes(shippingType)) {
@@ -676,6 +680,8 @@ app.post("/api/packages", async (req, res) => {
       return res.status(400).json({ error: "Repartidor inválido" });
     }
   }
+  const peso = parseFloat(pesoKg) || 0;
+  const precioEnvio = peso > 0 && peso <= 2 ? 10 : (parseFloat(req.body.precioEnvio) || 0);
   const pkg = await call(repo.createPackage, {
     ...req.body,
     tipoEnvio: shippingType,
@@ -684,7 +690,11 @@ app.post("/api/packages", async (req, res) => {
       shippingType === "cliente_cliente" ? remitenteClienteId : null,
     operadorId: operadorFinal,
     destinoTexto: textValue(destinoTexto),
-    descripcion: textValue(descripcion)
+    descripcion: textValue(descripcion),
+    pesoKg: peso,
+    precioEnvio,
+    quienPaga: quienPaga === "destinatario" ? "destinatario" : "remitente",
+    pagado: false
   });
   res.status(201).json(pkg);
 });
