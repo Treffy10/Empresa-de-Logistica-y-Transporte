@@ -682,23 +682,21 @@ const AdminPackageDetail = () => {
                   </button>
                 )}
               </div>
-              {pkg.estadoActual === "En Almacén" && (
-                canMarkSalida && (
-                  <button
-                    type="button"
-                    onClick={handleAction}
-                    disabled={actionLoading}
-                    className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-accent-500 px-6 py-3 text-sm font-semibold text-white"
-                  >
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M3 7h11v10H3z" />
-                      <path d="M14 10h4l3 3v4h-7z" />
-                      <circle cx="7" cy="19" r="1.5" />
-                      <circle cx="18" cy="19" r="1.5" />
-                    </svg>
-                    {actionLoading ? "Procesando..." : "Marcar Salida"}
-                  </button>
-                )
+              {pkg.estadoActual === "En Almacén" && canMarkSalida && (
+                <button
+                  type="button"
+                  onClick={handleAction}
+                  disabled={actionLoading}
+                  className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-accent-500 px-6 py-3 text-sm font-semibold text-white"
+                >
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 7h11v10H3z" />
+                    <path d="M14 10h4l3 3v4h-7z" />
+                    <circle cx="7" cy="19" r="1.5" />
+                    <circle cx="18" cy="19" r="1.5" />
+                  </svg>
+                  {actionLoading ? "Procesando..." : "Marcar Salida"}
+                </button>
               )}
               {pkg?.pagado && (
                 <div className="mt-4 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700 font-semibold text-center">
@@ -709,33 +707,31 @@ const AdminPackageDetail = () => {
                 <button
                   type="button"
                   onClick={() => { setPagoMetodo(null); setPagoModalOpen(true); }}
-                  className="mt-4 inline-flex items-center justify-center gap-2 rounded-full border-2 border-dashed border-brand-300 bg-brand-50 px-6 py-3 text-sm font-semibold text-brand-700 hover:bg-brand-100"
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-full border-2 border-dashed border-brand-300 bg-brand-50 px-6 py-3 text-sm font-semibold text-brand-700 hover:bg-brand-100"
                 >
                   💰 Registrar pago ({pkg?.precioEnvio || 0} soles)
                 </button>
               )}
-              {pkg.estadoActual === "En Tránsito" && (
-                canConfirmEntrega && (
-                  <button
-                    type="button"
-                    onClick={handleAction}
-                    disabled={actionLoading}
-                    className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-brand-600 px-6 py-3 text-sm font-semibold text-white"
-                  >
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="9" />
-                      <path d="M8 12l2.5 2.5L16 9" />
-                    </svg>
-                    {actionLoading ? "Procesando..." : "Confirmar Entrega"}
-                  </button>
-                )
+              {pkg.estadoActual === "En Tránsito" && canConfirmEntrega && (
+                <button
+                  type="button"
+                  onClick={handleAction}
+                  disabled={actionLoading}
+                  className="mt-6 flex w-full items-center justify-center gap-2 rounded-full bg-brand-600 px-6 py-3 text-sm font-semibold text-white"
+                >
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M8 12l2.5 2.5L16 9" />
+                  </svg>
+                  {actionLoading ? "Procesando..." : "Confirmar Entrega"}
+                </button>
               )}
               {pkg.estadoActual === "En Tránsito" && canMarkFailed && (
                 <button
                   type="button"
                   onClick={openFailedAttemptModal}
                   disabled={actionLoading}
-                  className="mt-4 inline-flex items-center justify-center gap-2 rounded-full border border-red-200 px-6 py-3 text-sm font-semibold text-red-600"
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-full border border-red-200 px-6 py-3 text-sm font-semibold text-red-600"
                 >
                   Registrar intento fallido
                 </button>
